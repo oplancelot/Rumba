@@ -1,0 +1,9 @@
+/target
+*.redb
+*.tar
+config.toml
+config_test.toml
+
+/tests
+
+/dev

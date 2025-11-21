@@ -1,0 +1,42 @@
+# Rumba Backup Tool Configuration
+# Copy this file to config.toml and customize for your environment
+
+[source]
+# SMB share URL to backup from
+# Windows UNC path format: \\server\share\path
+url = "\\\\10.202.182.2\\ito\\監視チーム"
+
+# SMB credentials
+username = "YIDA014"
+
+# Password can be plain text or base64 encoded with "base64:" prefix
+# To encode a password, run: cargo run --bin rumba -- encode-password "your_password"
+# Plain text (not recommended for production):
+# password = "your_password"
+# Base64 encoded (provides basic obfuscation):
+password = "base64:TkBoZW1dvZ2lxcDE="
+
+[target]
+# Output mode: "rustltfs" or "tar"
+# - "rustltfs": Stream data to rustltfs process (default, for real tape backup)
+# - "tar": Write to local tar file (for testing or disk backup)
+output_mode = "rustltfs"
+
+# Path to rustltfs binary (only used in rustltfs mode)
+# Default: "rustltfs" (looks in PATH)
+rustltfs_path = "rustltfs"
+
+# Tape device path or tar file path (depends on output_mode)
+# - In rustltfs mode: device path like "/dev/nst0" or "\\.\TAPE0" (Windows)
+# - In tar mode: local file path like "tape_drive.tar"
+tape_path = "/dev/nst0"
+
+# Path to the metadata database
+db_path = "backup_meta.redb"
+
+[backup]
+# Number of parallel scanning threads (default: number of CPU cores)
+# parallel_threads = 4
+
+# Zstd compression level (0-22, higher = better compression but slower)
+# compression_level = 3
