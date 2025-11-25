@@ -2,7 +2,7 @@
 # Reads all parameters from config file - simple usage
 
 param(
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory = $true)]
     [string]$ConfigFile,
     
     [string]$LogDir = ".\logs"
@@ -46,7 +46,8 @@ function Get-TomlValue {
             $inSection = $false
         }
         
-        if ($inSection -and $line -match "^$Key\s*=\s*`"?([^`"]+)`"?") {
+        $pattern = '^' + $Key + '\s*=\s*"?([^"]+)"?'
+        if ($inSection -and $line -match $pattern) {
             return $matches[1].Trim('"')
         }
     }
@@ -121,7 +122,8 @@ try {
     Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Green
     Write-Host ""
     
-} catch {
+}
+catch {
     Write-Host ""
     Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Red
     Write-Host "║                  ❌ Backup failed!                         ║" -ForegroundColor Red
@@ -129,7 +131,8 @@ try {
     Write-Host ""
     Write-Host "   Error: $_" -ForegroundColor Red
     exit 1
-} finally {
+}
+finally {
     Stop-Transcript
     Write-Host "📝 Log: $LogFile" -ForegroundColor Cyan
     Write-Host ""
