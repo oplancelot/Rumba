@@ -376,7 +376,3 @@ Rumba/
 ## 许可证
 
 MIT
-
-## 贡献
-
-基于 DEVELOPMENT_SPEC.md 中的开发规范进行开发。

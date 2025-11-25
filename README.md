@@ -233,7 +233,3 @@ Rumba/
 ## License
 
 MIT
-
-## Contributing
-
-Development follows the specifications in DEVELOPMENT_SPEC.md.
