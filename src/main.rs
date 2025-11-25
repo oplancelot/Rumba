@@ -30,6 +30,23 @@ enum Commands {
         /// Password to encode
         password: String,
     },
+    
+    /// Run backup and output tar archive
+    /// Use --output - to stream to stdout for piping to rustltfs
+    Backup {
+        /// Path to configuration file
+        #[arg(short, long, default_value = "config.toml")]
+        config: String,
+        
+        /// Output path for tar archive
+        /// Use "-" to output to stdout for streaming to rustltfs via pipe
+        #[arg(short, long)]
+        output: String,
+        
+        /// Output format (currently only "tar" is supported)
+        #[arg(long, default_value = "tar")]
+        format: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -45,6 +62,10 @@ fn main() -> Result<()> {
                 println!("Encoded password for config file:");
                 println!("{}", encoded);
                 return Ok(());
+            }
+            
+            Commands::Backup { config: config_path, output, format } => {
+                return run_backup_command(&config_path, &output, &format);
             }
         }
     }
@@ -66,7 +87,7 @@ fn main() -> Result<()> {
     let root_path = config.get_backup_root()?;
     info!("Starting backup for root: {:?}", root_path);
     
-    let pipeline = pipeline::Pipeline::new(db.clone(), root_path.clone());
+    let pipeline = pipeline::Pipeline::new(db.clone(), root_path.clone(), config.source.excludes.clone());
     let plan = pipeline.run()?;
     
     info!("Backup Plan Generated:");
@@ -207,3 +228,99 @@ fn main() -> Result<()> {
 
     Ok(())
 }
+
+/// Run backup command (for streaming to stdout or file)
+/// This is used by the `backup` subcommand to support PowerShell pipe integration
+fn run_backup_command(config_path: &str, output: &str, format: &str) -> Result<()> {
+    use std::io::Write;
+    
+    // Only tar format is supported currently
+    if format != "tar" {
+        anyhow::bail!("Only 'tar' format is currently supported");
+    }
+    
+    // Load configuration
+    let config = config::Config::from_file(config_path)?;
+    eprintln!("Rumba: Configuration loaded from: {}", config_path);
+    eprintln!("Rumba: Source: {}", config.source.url);
+    
+    // Initialize database
+    let db = db::BackupDb::new(&config.target.db_path)?;
+    eprintln!("Rumba: Database initialized");
+    
+    // Run pipeline
+    let root_path = config.get_backup_root()?;
+    eprintln!("Rumba: Scanning files from: {:?}", root_path);
+    
+    let pipeline = pipeline::Pipeline::new(db.clone(), root_path.clone(), config.source.excludes.clone());
+    let plan = pipeline.run()?;
+    
+    eprintln!("Rumba: Backup plan generated");
+    eprintln!("Rumba:   New files: {}", plan.new_files.len());
+    eprintln!("Rumba:   Total size: {} bytes ({:.2} MB)", 
+        plan.total_size,
+        plan.total_size as f64 / 1024.0 / 1024.0
+    );
+    
+    if plan.new_files.is_empty() {
+        eprintln!("Rumba: Nothing to backup");
+        return Ok(());
+    }
+    
+    // Create tape writer based on output parameter
+    let mut tape_writer = if output == "-" {
+        // Stream to stdout
+        eprintln!("Rumba: Streaming tar to stdout...");
+        let stdout = std::io::stdout();
+        tape::TapeWriter::new_tar_stream(stdout)?
+    } else {
+        // Write to file
+        eprintln!("Rumba: Writing tar to file: {}", output);
+        tape::TapeWriter::new_tar_file(output, 0)?
+    };
+    
+    // Write backup plan to tar
+    eprintln!("Rumba: Writing {} files to tar archive...", plan.new_files.len());
+    let blob_locations = tape_writer.write_plan(&plan)?;
+    
+    // Finish writing
+    tape_writer.finish()?;
+    
+    if output == "-" {
+        eprintln!("Rumba: Tar stream completed successfully");
+    } else {
+        eprintln!("Rumba: Tar file written successfully: {}", output);
+    }
+    
+    // Update database with blob locations
+    let write_txn = db.begin_write()?;
+    
+    for (hash, location) in blob_locations {
+        db.insert_blob(&write_txn, &hash, &location)?;
+    }
+    
+    // Update index
+    for (path, hash) in &plan.new_files {
+        if let Ok(metadata) = std::fs::metadata(path) {
+            let mtime = metadata.modified()
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64)
+                .unwrap_or(0);
+            let size = metadata.len();
+            
+            let path_str = path.to_string_lossy();
+            let entry = models::IndexEntry {
+                mtime,
+                size,
+                hash: *hash,
+            };
+            db.insert_index(&write_txn, &path_str, &entry)?;
+        }
+    }
+    
+    write_txn.commit()?;
+    eprintln!("Rumba: Database updated successfully");
+    eprintln!("Rumba: Backup completed!");
+    
+    Ok(())
+}
+

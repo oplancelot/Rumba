@@ -9,6 +9,8 @@ pub struct Config {
     pub target: TargetConfig,
     #[serde(default)]
     pub backup: BackupConfig,
+    #[serde(default)]
+    pub tape: TapeConfig,
 }
 
 /// SMB source configuration
@@ -20,6 +22,9 @@ pub struct SourceConfig {
     pub username: String,
     /// Password (can be plain text or base64 encoded with "base64:" prefix)
     pub password: String,
+    /// List of glob patterns to exclude from backup
+    #[serde(default)]
+    pub excludes: Vec<String>,
 }
 
 /// Backup target configuration
@@ -55,6 +60,42 @@ pub struct BackupConfig {
     pub compression_level: i32,
 }
 
+/// Tape device and streaming configuration (for PowerShell scripts)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TapeConfig {
+    /// Tape device path (e.g., "\\.\TAPE0" on Windows, "/dev/sg0" on Linux)
+    #[serde(default = "default_tape_device")]
+    pub device: String,
+    
+    /// Path to rumba executable (for PowerShell scripts)
+    #[serde(default = "default_rumba_path")]
+    pub rumba_path: String,
+    
+    /// Path to rustltfs executable
+    #[serde(default = "default_rustltfs_path")]
+    pub rustltfs_path: String,
+    
+    /// Path to database file for backup metadata
+    #[serde(default = "default_db_path")]
+    pub database_path: String,
+    
+    /// Skip database backup in streaming mode
+    #[serde(default)]
+    pub skip_database: bool,
+    
+    /// Email notification settings
+    #[serde(default)]
+    pub email_notification: bool,
+    
+    /// Email recipient address
+    #[serde(default)]
+    pub email_to: Option<String>,
+    
+    /// SMTP server address
+    #[serde(default)]
+    pub smtp_server: Option<String>,
+}
+
 // Default values
 fn default_output_mode() -> String {
     "rustltfs".to_string()
@@ -80,11 +121,38 @@ fn default_compression_level() -> i32 {
     3
 }
 
+fn default_tape_device() -> String {
+    if cfg!(windows) {
+        "\\\\.\\TAPE0".to_string()
+    } else {
+        "/dev/sg0".to_string()
+    }
+}
+
+fn default_rumba_path() -> String {
+    "rumba".to_string()
+}
+
 impl Default for BackupConfig {
     fn default() -> Self {
         Self {
             parallel_threads: default_parallel_threads(),
             compression_level: default_compression_level(),
+        }
+    }
+}
+
+impl Default for TapeConfig {
+    fn default() -> Self {
+        Self {
+            device: default_tape_device(),
+            rumba_path: default_rumba_path(),
+            rustltfs_path: default_rustltfs_path(),
+            database_path: default_db_path(),
+            skip_database: false,
+            email_notification: false,
+            email_to: None,
+            smtp_server: None,
         }
     }
 }

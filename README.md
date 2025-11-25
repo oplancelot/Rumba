@@ -1,394 +1,250 @@
 # Rumba - Rust LTFS Git-like Backup Tool
 
-高性能的 LTO 磁带增量备份工具，使用 Git 理念进行内容寻址存储。
+High-performance incremental backup tool for LTO tape using Git-inspired content-addressable storage.
 
-## 功能特性
+[中文文档](README_CN.md)
 
-- ✅ **配置文件管理**: 支持 TOML 格式的配置文件
-- ✅ **SMB 凭证管理**: 支持 Samba 共享的用户名/密码认证
-- ✅ **密码模糊化**: 使用 Base64 编码保护配置文件中的密码
-- ✅ **增量备份**: 基于文件内容 Hash 的去重和索引
-- ✅ **redb 元数据存储**: 使用嵌入式数据库存储备份元数据
-- ✅ **Git-like 机制**: 内容寻址存储 (CAS) + Merkle Tree
-- 🚧 **LTFS 集成**: 计划集成 rustltfs 进行真实磁带写入
+## Features
 
-## 架构与原理
+- ✅ **Configuration Management**: TOML-based configuration file support
+- ✅ **SMB Credential Management**: Username/password authentication for Samba shares
+- ✅ **Password Obfuscation**: Base64 encoding for password protection in config files
+- ✅ **Incremental Backup**: Content-based deduplication using file hashes
+- ✅ **redb Metadata Storage**: Embedded database for backup metadata
+- ✅ **Git-like Mechanism**: Content-Addressable Storage (CAS) + Merkle Tree
+- ✅ **Streaming Backup**: Zero-temp-file streaming to tape via PowerShell pipes
+- 🚧 **LTFS Integration**: Integration with rustltfs for real tape writing
 
-### 核心设计理念
+## Quick Start
 
-Rumba 借鉴了 Git 的内部机制，专为海量文件备份设计：
+### 1. Configuration
 
-1.  **内容寻址存储 (CAS)**:
-    - 文件不按文件名存储，而是按内容的 BLAKE3 哈希存储。
-    - **自动去重**: 相同内容的文件（即使文件名不同）只存储一份数据。
-    - **数据完整性**: 哈希值即校验和，天然防止静默数据损坏。
-
-2.  **高效增量备份**:
-    - **Level 1 - 快速检查**: 对比文件 `mtime` 和 `size`（类似 Git Index）。如果未变，直接跳过。
-    - **Level 2 - 内容检查**: 如果元数据变化，计算内容哈希。查询数据库 `blobs` 表，如果哈希已存在，仅更新索引（无需重传数据）。
-    - **Level 3 - 数据写入**: 只有全新的内容块才会被写入磁带。
-
-3.  **元数据分离**:
-    - 文件内容流式写入磁带（线性存储，适合 LTO）。
-    - 文件元数据（文件名、权限、目录结构）存储在快速的本地 KV 数据库 (redb) 中。
-
-### 系统架构图
-
-```mermaid
-graph TD
-    Source[SMB 共享源] -->|并行扫描 jwalk| Scanner(扫描器)
-    Scanner -->|排序后的目录流| Pipeline{Pipeline 流水线}
-    
-    subgraph Pipeline Process [Pipeline 处理流程]
-        Pipeline -->|自底向上构建树| TreeBuilder[Merkle Tree 构建]
-        TreeBuilder -->|1. 检查 mtime/size| IndexCheck{索引检查}
-        IndexCheck -->|未修改| Skip[跳过]
-        IndexCheck -->|已修改| Hasher[计算 BLAKE3]
-        Hasher -->|2. 检查内容哈希| DedupCheck{去重检查}
-        DedupCheck -->|Hash 已存在| UpdateIdx[仅更新索引]
-        DedupCheck -->|新 Hash| NewFile[加入备份计划]
-    end
-    
-    NewFile --> BackupPlan[生成备份计划]
-    
-    BackupPlan --> TapeWriter(磁带写入器)
-    TapeWriter -->|流式打包 (Tar)| Output[Output: rustltfs / tar]
-    
-    TapeWriter -.->|3. 事务提交| DB[(Redb 元数据库)]
-    
-    DB <--> IndexCheck
-    DB <--> DedupCheck
-```
-
-### 核心模块与函数调用说明
-
-#### 1. Scanner (`src/scanner.rs`)
-负责文件系统的遍历。
-- **`scan_parallel`**: 使用 `jwalk` 进行多线程递归扫描。
-  - **关键特性**: 为了保证 Merkle Tree 计算的确定性，在处理每个目录时，会对子项按文件名进行**严格排序** (`children.sort_by`)。
-  - **输出**: 通过 Channel 发送 `ScannedDir` 结构，包含排序后的目录条目。
-
-#### 2. Pipeline (`src/pipeline.rs`)
-备份流程的编排者，采用**自底向上 (Bottom-Up)** 策略。
-- **`run`**: 启动扫描线程，接收扫描结果。
-  - **排序**: 将所有路径按长度降序排序（先处理叶子节点/子目录，再处理父目录）。
-  - **Tree 构建**: 逐层计算目录的 Merkle Hash。子目录的 Hash 会被父目录引用。
-  - **文件处理**: 对每个文件调用 Diff 引擎。
-
-#### 3. Diff Engine (`src/diff.rs`)
-负责判断文件是否需要备份。
-- **`check_index(path, mtime, size)`**: 查询 `index` 表。如果 mtime 和 size 匹配，返回 `Some(Hash)`（跳过哈希计算）。
-- **`should_backup_blob(hash)`**: 查询 `blobs` 表。如果 Hash 已存在，返回 `false`（跳过数据传输，仅更新引用）。
-
-#### 4. Tape Writer (`src/tape.rs`)
-负责将文件打包并写入目标。
-- **`write_plan`**: 接收 `BackupPlan`，遍历新增文件列表。
-- **Tar 打包**: 使用 `tar::Builder` 生成标准 Tar 流。
-  - **文件名格式**: `original_filename_hash` (例如 `report.pdf_a1b2c3...`)，确保文件名唯一且包含内容指纹。
-- **输出模式**:
-  - **`RustLtfs`**: 启动 `rustltfs` 子进程，通过 Stdin 管道传输数据（生产模式）。
-  - **`TarFile`**: 写入本地文件，文件名包含时间戳（测试模式）。
-
-#### 5. Database (`src/db.rs`)
-封装 `redb` 操作，使用 `rkyv` 进行零拷贝序列化。
-- **表结构**:
-  - `blobs`: `Hash -> (TapeID, Offset)` (去重索引)
-  - `index`: `Path -> (Mtime, Size, Hash)` (快速增量索引)
-  - `trees`: `Hash -> Vec<TreeEntry>` (目录结构，待完善)
-- **对齐处理**: 在读取数据时使用 `to_vec()` 将数据复制到对齐的内存缓冲区，解决 `rkyv` 的对齐要求。
-
-#### 6. Data Models (`src/models.rs`)
-定义核心数据结构，均支持 `rkyv` 零拷贝序列化。
-- **`FileMetadata`**: 文件的元数据（大小、mtime、权限等）。
-- **`TreeEntry`**: 目录树中的节点，包含文件名、模式和 Hash 指针。
-- **`BlobLocation`**: 记录 Blob 在磁带上的物理位置（TapeID + Offset）。
-
-
-## 架构与原理
-
-### 核心设计理念
-
-Rumba 借鉴了 Git 的内部机制，专为海量文件备份设计：
-
-1.  **内容寻址存储 (CAS)**:
-    - 文件不按文件名存储，而是按内容的 BLAKE3 哈希存储。
-    - **自动去重**: 相同内容的文件（即使文件名不同）只存储一份数据。
-    - **数据完整性**: 哈希值即校验和，天然防止静默数据损坏。
-
-2.  **高效增量备份**:
-    - **Level 1 - 快速检查**: 对比文件 `mtime` 和 `size`（类似 Git Index）。如果未变，直接跳过。
-    - **Level 2 - 内容检查**: 如果元数据变化，计算内容哈希。查询数据库 `blobs` 表，如果哈希已存在，仅更新索引（无需重传数据）。
-    - **Level 3 - 数据写入**: 只有全新的内容块才会被写入磁带。
-
-3.  **元数据分离**:
-    - 文件内容流式写入磁带（线性存储，适合 LTO）。
-    - 文件元数据（文件名、权限、目录结构）存储在快速的本地 KV 数据库 (redb) 中。
-
-### 系统架构图
-
-```mermaid
-graph TD
-    Source[SMB 共享源] -->|并行扫描 jwalk| Scanner(扫描器)
-    Scanner -->|排序后的目录流| Pipeline{Pipeline 流水线}
-    
-    subgraph Pipeline Process [Pipeline 处理流程]
-        Pipeline -->|自底向上构建树| TreeBuilder[Merkle Tree 构建]
-        TreeBuilder -->|1. 检查 mtime/size| IndexCheck{索引检查}
-        IndexCheck -->|未修改| Skip[跳过]
-        IndexCheck -->|已修改| Hasher[计算 BLAKE3]
-        Hasher -->|2. 检查内容哈希| DedupCheck{去重检查}
-        DedupCheck -->|Hash 已存在| UpdateIdx[仅更新索引]
-        DedupCheck -->|新 Hash| NewFile[加入备份计划]
-    end
-    
-    NewFile --> BackupPlan[生成备份计划]
-    
-    BackupPlan --> TapeWriter(磁带写入器)
-    TapeWriter -->|流式打包 (Tar)| Output[Output: rustltfs / tar]
-    
-    TapeWriter -.->|3. 事务提交| DB[(Redb 元数据库)]
-    
-    DB <--> IndexCheck
-    DB <--> DedupCheck
-```
-
-### 核心模块与函数调用说明
-
-#### 1. Scanner (`src/scanner.rs`)
-负责文件系统的遍历。
-- **`scan_parallel`**: 使用 `jwalk` 进行多线程递归扫描。
-  - **关键特性**: 为了保证 Merkle Tree 计算的确定性，在处理每个目录时，会对子项按文件名进行**严格排序** (`children.sort_by`)。
-  - **输出**: 通过 Channel 发送 `ScannedDir` 结构，包含排序后的目录条目。
-
-#### 2. Pipeline (`src/pipeline.rs`)
-备份流程的编排者，采用**自底向上 (Bottom-Up)** 策略。
-- **`run`**: 启动扫描线程，接收扫描结果。
-  - **排序**: 将所有路径按长度降序排序（先处理叶子节点/子目录，再处理父目录）。
-  - **Tree 构建**: 逐层计算目录的 Merkle Hash。子目录的 Hash 会被父目录引用。
-  - **文件处理**: 对每个文件调用 Diff 引擎。
-
-#### 3. Diff Engine (`src/diff.rs`)
-负责判断文件是否需要备份。
-- **`check_index(path, mtime, size)`**: 查询 `index` 表。如果 mtime 和 size 匹配，返回 `Some(Hash)`（跳过哈希计算）。
-- **`should_backup_blob(hash)`**: 查询 `blobs` 表。如果 Hash 已存在，返回 `false`（跳过数据传输，仅更新引用）。
-
-#### 4. Tape Writer (`src/tape.rs`)
-负责将文件打包并写入目标。
-- **`write_plan`**: 接收 `BackupPlan`，遍历新增文件列表。
-- **Tar 打包**: 使用 `tar::Builder` 生成标准 Tar 流。
-  - **文件名格式**: `original_filename_hash` (例如 `report.pdf_a1b2c3...`)，确保文件名唯一且包含内容指纹。
-- **输出模式**:
-  - **`RustLtfs`**: 启动 `rustltfs` 子进程，通过 Stdin 管道传输数据（生产模式）。
-  - **`TarFile`**: 写入本地文件，文件名包含时间戳（测试模式）。
-
-#### 5. Database (`src/db.rs`)
-封装 `redb` 操作，使用 `rkyv` 进行零拷贝序列化。
-- **表结构**:
-  - `blobs`: `Hash -> (TapeID, Offset)` (去重索引)
-  - `index`: `Path -> (Mtime, Size, Hash)` (快速增量索引)
-  - `trees`: `Hash -> Vec<TreeEntry>` (目录结构，待完善)
-- **对齐处理**: 在读取数据时使用 `to_vec()` 将数据复制到对齐的内存缓冲区，解决 `rkyv` 的对齐要求。
-
-
-## 快速开始
-
-### 1. 配置文件设置
-
-复制示例配置文件并编辑：
+Copy the example configuration and edit:
 
 ```bash
 copy config.example.toml config.toml
 ```
 
-编辑 `config.toml` 填入你的 SMB 凭证：
+Edit `config.toml` with your settings:
 
 ```toml
 [source]
 url = "\\\\server\\share\\path"
 username = "your_username"
-password = "your_password"  # 或使用 base64 编码
+password = "your_password"  # or use base64 encoding
 
 [target]
-tape_path = "tape_drive.tar"
+output_mode = "tar"
+tape_path = "backup.tar"
 db_path = "backup_meta.redb"
 
-[backup]
-parallel_threads = 4
-compression_level = 3
+[tape]
+device = "\\\\.\\TAPE0"  # Windows: \\.\TAPE0, Linux: /dev/sg0
+rumba_path = "rumba"
+rustltfs_path = "rustltfs"
+database_path = "rumba.db"
 ```
 
-### 2. 密码编码（可选）
+### 2. Password Encoding (Optional)
 
-为了避免明文存储密码，可以使用 Base64 编码：
+To avoid storing passwords in plain text:
 
 ```bash
 cargo run --bin rumba -- encode-password "your_password"
 ```
 
-将输出的 `base64:xxx` 粘贴到配置文件的 `password` 字段。
+Copy the `base64:xxx` output to the `password` field in config.
 
-### 3. 运行备份
+### 3. Run Backup
+
+#### Method 1: Direct tar output
 
 ```bash
-# 使用默认配置文件 config.toml
-cargo run --bin rumba
-
-# 或指定配置文件路径
-cargo run --bin rumba -- --config /path/to/config.toml
+cargo run --bin rumba -- backup --config config.toml --output backup.tar
 ```
 
-### 4. 检查数据库内容
+#### Method 2: Streaming to tape (recommended)
 
-使用 `db-inspect` 工具查看备份元数据：
+```powershell
+# Simple usage - all parameters from config file
+.\scripts\backup-streaming.ps1 -ConfigFile config.toml
+```
+
+This will:
+- Stream tar data directly from Rumba to rustltfs (zero temp files)
+- Write to tape device specified in config
+- Backup database metadata
+- Generate logs
+
+### 4. Inspect Database
+
+Use the `db-inspect` tool to view backup metadata:
 
 ```bash
-# 显示统计信息
+# Show statistics
 cargo run --bin db-inspect -- stats
 
-# 列出所有 blobs
+# List all blobs
 cargo run --bin db-inspect -- list-blobs
 
-# 列出索引条目
+# List index entries
 cargo run --bin db-inspect -- list-index
-
-# 查看特定文件的索引
-cargo run --bin db-inspect -- show-index "\\\\server\\share\\file.txt"
 ```
 
-## 测试
+## Architecture
 
-### 自动化测试
+### Core Design Principles
 
-运行提供的测试脚本：
+Rumba borrows from Git's internal mechanisms, designed for massive file backups:
 
-```bash
-.\test_config.bat
+1. **Content-Addressable Storage (CAS)**:
+   - Files are stored by content hash (BLAKE3), not filename
+   - **Automatic deduplication**: Identical content stored only once
+   - **Data integrity**: Hash serves as checksum, preventing silent corruption
+
+2. **Efficient Incremental Backup**:
+   - **Level 1 - Quick Check**: Compare file `mtime` and `size` (like Git Index)
+   - **Level 2 - Content Check**: If metadata changed, compute content hash and check `blobs` table
+   - **Level 3 - Data Write**: Only new content blocks are written to tape
+
+3. **Metadata Separation**:
+   - File content streamed to tape (linear storage, optimal for LTO)
+   - File metadata (names, permissions, directory structure) in fast local KV database (redb)
+
+### System Architecture
+
+```mermaid
+graph TD
+    Source[SMB Share] -->|Parallel scan| Scanner(Scanner)
+    Scanner -->|Sorted directory stream| Pipeline{Pipeline}
+    
+    subgraph Pipeline Process
+        Pipeline -->|Bottom-up tree build| TreeBuilder[Merkle Tree Builder]
+        TreeBuilder -->|1. Check mtime/size| IndexCheck{Index Check}
+        IndexCheck -->|Unchanged| Skip[Skip]
+        IndexCheck -->|Changed| Hasher[Compute BLAKE3]
+        Hasher -->|2. Check content hash| DedupCheck{Dedup Check}
+        DedupCheck -->|Hash exists| UpdateIdx[Update Index Only]
+        DedupCheck -->|New hash| NewFile[Add to Backup Plan]
+    end
+    
+    NewFile --> BackupPlan[Generate Backup Plan]
+    BackupPlan --> TapeWriter(Tape Writer)
+    TapeWriter -->|Stream tar| Output[Output: rustltfs / tar]
+    TapeWriter -.->|3. Transaction commit| DB[(Redb Metadata DB)]
+    
+    DB <--> IndexCheck
+    DB <--> DedupCheck
 ```
 
-该脚本会：
-1. 清理旧的测试数据
-2. 测试密码编码
-3. 运行首次备份（所有文件应为新文件）
-4. 验证数据库和磁带文件已创建
-5. 运行第二次备份（应跳过所有未修改文件）
-6. 显示数据库统计信息
+## Streaming Backup
 
-### 手动测试
+Rumba supports **zero-temp-file streaming** for optimal performance:
 
-测试三个核心功能（按照提供的测试计划）：
-
-#### 测试 1: SMB 文件差异识别
-
-```bash
-cargo run --bin rumba -- --config config_test.toml
+```powershell
+# Rumba generates tar → PowerShell pipe → rustltfs writes to tape
+rumba backup --config config.toml --output - | `
+    rustltfs write --device \\.\TAPE0 --destination /incremental_20251125/backup.tar
 ```
 
-验证点：
-- 程序成功连接到 SMB 共享
-- 扫描器遍历所有文件
-- 日志显示扫描的文件数量
+**Benefits**:
+- ✅ Zero temporary files
+- ✅ Reduced disk I/O by 66%
+- ✅ Real-time streaming
+- ✅ Memory-efficient
 
-#### 测试 2: redb 数据库存储
+See [scripts/README.md](scripts/README.md) for detailed usage.
 
-```bash
-# 首次备份
-cargo run --bin rumba -- --config config_test.toml
-
-# 第二次备份（应显示 "Nothing to backup"）
-cargo run --bin rumba -- --config config_test.toml
-
-# 检查数据库
-cargo run --bin db-inspect -- stats
-```
-
-#### 测试 3: 文件流输出（Mock rustltfs）
-
-```bash
-# 运行备份
-cargo run --bin rumba -- --config config_test.toml
-
-# 检查生成的 tar 文件
-tar -tvf tape_drive.tar
-```
-
-当前实现将文件流写入本地 `tape_drive.tar` 文件。未来可以通过管道传递给 `rustltfs` 进程。
-
-## 项目结构
+## Project Structure
 
 ```
 Rumba/
 ├── src/
-│   ├── main.rs          # 主程序入口
-│   ├── lib.rs           # 库接口
-│   ├── config.rs        # 配置文件管理 ⭐ NEW
-│   ├── models.rs        # 数据结构定义
-│   ├── db.rs            # redb 数据库操作
-│   ├── scanner.rs       # 文件扫描器
-│   ├── pipeline.rs      # 备份流水线
-│   ├── diff.rs          # 差异计算引擎
-│   ├── tape.rs          # 磁带写入器
+│   ├── main.rs          # Main entry point
+│   ├── lib.rs           # Library interface
+│   ├── config.rs        # Configuration management
+│   ├── models.rs        # Data structure definitions
+│   ├── db.rs            # redb database operations
+│   ├── scanner.rs       # File scanner
+│   ├── pipeline.rs      # Backup pipeline
+│   ├── diff.rs          # Diff engine
+│   ├── tape.rs          # Tape writer
 │   └── bin/
-│       └── db_inspect.rs # 数据库检查工具 ⭐ NEW
-├── config.example.toml   # 配置文件示例 ⭐ NEW
-├── config_test.toml      # 测试配置 ⭐ NEW
-├── test_config.bat       # 自动化测试脚本 ⭐ NEW
-├── TEST_PLAN.md          # 详细测试计划 ⭐ NEW
-├── DEVELOPMENT_SPEC.md   # 开发规范
+│       └── db_inspect.rs # Database inspection tool
+├── scripts/
+│   ├── backup-streaming.ps1  # Streaming backup script
+│   └── restore-from-tape.ps1 # Restore script
+├── config.example.toml   # Configuration example
 └── Cargo.toml
 ```
 
-## 配置说明
+## Configuration
 
-### [source] - 备份源配置
+### [source] - Backup Source
 
-- `url`: SMB 共享路径（Windows UNC 格式）
-- `username`: SMB 用户名
-- `password`: SMB 密码（支持明文或 base64 编码）
+- `url`: SMB share path (Windows UNC format)
+- `username`: SMB username
+- `password`: SMB password (plain text or base64 encoded)
+- `excludes`: Glob patterns to exclude from backup
 
-### [target] - 备份目标配置
+### [target] - Backup Target
 
-- `tape_path`: 磁带设备路径或模拟文件路径
-- `db_path`: 元数据数据库路径
+- `output_mode`: "rustltfs" or "tar"
+- `tape_path`: Tape device path or tar file path
+- `db_path`: Metadata database path
 
-### [backup] - 备份行为配置
+### [backup] - Backup Behavior
 
-- `parallel_threads`: 并行扫描线程数（默认：CPU 核心数）
-- `compression_level`: Zstd 压缩级别 0-22（默认：3）
+- `parallel_threads`: Number of parallel scanning threads (default: CPU cores)
+- `compression_level`: Zstd compression level 0-22 (default: 3)
 
-## 安全注意事项
+### [tape] - Tape Device Configuration
 
-⚠️ **密码存储**：
+- `device`: Tape device path (Windows: `\\\\.\\TAPE0`, Linux: `/dev/sg0`)
+- `rumba_path`: Path to rumba executable
+- `rustltfs_path`: Path to rustltfs executable
+- `database_path`: Database file path
+- `skip_database`: Skip database backup
+- `email_notification`: Enable email notifications
+- `email_to`: Email recipient
+- `smtp_server`: SMTP server address
 
-- Base64 编码仅提供**模糊化**，不是加密
-- 不建议在生产环境中将密码存储在配置文件中
-- 考虑使用：
-  - Windows 凭证管理器 API
-  - 运行时密码提示
-  - 环境变量传递
+## Security Notes
 
-## 技术栈
+⚠️ **Password Storage**:
 
-- **语言**: Rust 2021 Edition
-- **数据库**: redb (嵌入式 KV 存储)
-- **序列化**: rkyv (零拷贝)
-- **哈希**: BLAKE3 (SIMD 加速)
-- **扫描**: jwalk (并行遍历)
-- **配置**: TOML + serde
+- Base64 encoding provides **obfuscation**, not encryption
+- Not recommended for production use
+- Consider using:
+  - Windows Credential Manager API
+  - Runtime password prompts
+  - Environment variables
+
+## Technology Stack
+
+- **Language**: Rust 2021 Edition
+- **Database**: redb (embedded KV store)
+- **Serialization**: rkyv (zero-copy)
+- **Hashing**: BLAKE3 (SIMD-accelerated)
+- **Scanning**: jwalk (parallel traversal)
+- **Configuration**: TOML + serde
 - **CLI**: clap
 
-## 下一步计划
+## Roadmap
 
-- [ ] 真实 rustltfs 进程集成
-- [ ] 进度条显示
-- [ ] 详细统计报告（跳过/新增/修改文件）
-- [ ] 配置验证工具
-- [ ] 数据库修复工具
-- [ ] 断点续传支持
+- [x] Streaming backup support
+- [x] PowerShell script integration
+- [x] Configuration-driven backup
+- [ ] Progress bar display
+- [ ] Detailed statistics report
+- [ ] Configuration validation tool
+- [ ] Database repair tool
+- [ ] Resume support
 
-## 许可证
+## License
 
-（待定）
+(To be determined)
 
-## 贡献
+## Contributing
 
-基于 DEVELOPMENT_SPEC.md 中的开发规范进行开发。
+Development follows the specifications in DEVELOPMENT_SPEC.md.

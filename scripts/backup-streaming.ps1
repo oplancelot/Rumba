@@ -1,0 +1,136 @@
+# Rumba Streaming Tape Backup Script v3.0
+# Reads all parameters from config file - simple usage
+
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$ConfigFile,
+    
+    [string]$LogDir = ".\logs"
+)
+
+$ErrorActionPreference = "Stop"
+
+# Generate timestamps
+$Date = Get-Date -Format "yyyyMMdd"
+$SessionId = Get-Date -Format "yyyyMMdd_HHmmss"
+
+# Create log directory
+if (-not (Test-Path $LogDir)) {
+    New-Item -ItemType Directory -Path $LogDir | Out-Null
+}
+$LogFile = Join-Path $LogDir "backup_$SessionId.log"
+Start-Transcript -Path $LogFile -Append
+
+Write-Host ""
+Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+Write-Host "║       Rumba Streaming Tape Backup v3.0                    ║" -ForegroundColor Cyan
+Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host ""
+
+# Simple TOML parser
+function Get-TomlValue {
+    param([string]$File, [string]$Section, [string]$Key)
+    
+    $content = Get-Content $File
+    $inSection = $false
+    
+    foreach ($line in $content) {
+        $line = $line.Trim()
+        
+        if ($line -match "^\[$Section\]") {
+            $inSection = $true
+            continue
+        }
+        
+        if ($line -match '^\[') {
+            $inSection = $false
+        }
+        
+        if ($inSection -and $line -match "^$Key\s*=\s*`"?([^`"]+)`"?") {
+            return $matches[1].Trim('"')
+        }
+    }
+    
+    return $null
+}
+
+try {
+    # Read configuration
+    Write-Host "📄 Reading config: $ConfigFile" -ForegroundColor Cyan
+    
+    $TapeDevice = Get-TomlValue -File $ConfigFile -Section "tape" -Key "device"
+    $RumbaPath = Get-TomlValue -File $ConfigFile -Section "tape" -Key "rumba_path"
+    $RustLtfsPath = Get-TomlValue -File $ConfigFile -Section "tape" -Key "rustltfs_path"
+    $DatabasePath = Get-TomlValue -File $ConfigFile -Section "tape" -Key "database_path"
+    $SkipDb = Get-TomlValue -File $ConfigFile -Section "tape" -Key "skip_database"
+    
+    # Default values
+    if (-not $TapeDevice) { $TapeDevice = "\\\\.\\TAPE0" }
+    if (-not $RumbaPath) { $RumbaPath = "rumba" }
+    if (-not $RustLtfsPath) { $RustLtfsPath = "rustltfs" }
+    if (-not $DatabasePath) { $DatabasePath = "rumba.db" }
+    
+    Write-Host "✅ Config loaded" -ForegroundColor Green
+    Write-Host "   Tape device: $TapeDevice" -ForegroundColor White
+    Write-Host "   Database: $DatabasePath" -ForegroundColor White
+    Write-Host ""
+    
+    # Step 1: Stream tar to tape
+    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "📦 Streaming tar to tape" -ForegroundColor Cyan
+    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    
+    $TarDest = "/incremental_$Date/backup_$SessionId.tar"
+    Write-Host "   Destination: $TarDest" -ForegroundColor White
+    Write-Host "   ⚡ Starting stream..." -ForegroundColor Yellow
+    Write-Host ""
+    
+    & $RumbaPath backup --config $ConfigFile --format tar --output - | `
+        & $RustLtfsPath write --device $TapeDevice --destination $TarDest --verify --progress
+    
+    if ($LASTEXITCODE -ne 0) {
+        throw "Backup failed"
+    }
+    
+    Write-Host ""
+    Write-Host "   ✅ Tar backup complete" -ForegroundColor Green
+    
+    # Step 2: Backup database
+    if ($SkipDb -ne "true" -and (Test-Path $DatabasePath)) {
+        Write-Host ""
+        Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+        Write-Host "💾 Writing database" -ForegroundColor Cyan
+        Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+        
+        $DbDest = "/incremental_$Date/database/rumba_$SessionId.db"
+        Write-Host "   Destination: $DbDest" -ForegroundColor White
+        Write-Host ""
+        
+        & $RustLtfsPath write --device $TapeDevice --source $DatabasePath --destination $DbDest --verify --progress
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host ""
+            Write-Host "   ✅ Database backup complete" -ForegroundColor Green
+        }
+    }
+    
+    # Complete
+    Write-Host ""
+    Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Green
+    Write-Host "║                  ✅ Backup successful!                     ║" -ForegroundColor Green
+    Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Green
+    Write-Host ""
+    
+} catch {
+    Write-Host ""
+    Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Red
+    Write-Host "║                  ❌ Backup failed!                         ║" -ForegroundColor Red
+    Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "   Error: $_" -ForegroundColor Red
+    exit 1
+} finally {
+    Stop-Transcript
+    Write-Host "📝 Log: $LogFile" -ForegroundColor Cyan
+    Write-Host ""
+}

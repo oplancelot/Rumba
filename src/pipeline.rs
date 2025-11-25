@@ -17,11 +17,12 @@ pub struct BackupPlan {
 pub struct Pipeline {
     db: BackupDb,
     root: PathBuf,
+    excludes: Vec<String>,
 }
 
 impl Pipeline {
-    pub fn new(db: BackupDb, root: PathBuf) -> Self {
-        Self { db, root }
+    pub fn new(db: BackupDb, root: PathBuf, excludes: Vec<String>) -> Self {
+        Self { db, root, excludes }
     }
 
     pub fn run(&self) -> Result<BackupPlan> {
@@ -30,10 +31,19 @@ impl Pipeline {
         // 1. Scan
         let (tx, rx) = mpsc::channel();
         let scanner_root = self.root.clone();
+        let excludes = self.excludes.clone();
         std::thread::spawn(move || {
-            let scanner = Scanner::new(scanner_root);
-            if let Err(e) = scanner.scan_parallel(tx) {
-                tracing::error!("Scanner failed: {}", e);
+            // Scanner::new might fail if patterns are invalid, but we validated config earlier.
+            // However, Scanner::new returns Result.
+            match Scanner::new(scanner_root, &excludes) {
+                Ok(scanner) => {
+                    if let Err(e) = scanner.scan_parallel(tx) {
+                        tracing::error!("Scanner failed: {}", e);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to initialize scanner: {}", e);
+                }
             }
         });
 
@@ -190,7 +200,7 @@ mod tests {
         fs::create_dir(root.join("subdir"))?;
         fs::write(root.join("subdir").join("file2.txt"), "content2")?;
 
-        let pipeline = Pipeline::new(db, root.to_path_buf());
+        let pipeline = Pipeline::new(db, root.to_path_buf(), vec![]);
         let plan = pipeline.run()?;
 
         // Verify plan

@@ -10,6 +10,8 @@ pub enum TapeOutput {
     RustLtfs(Child),
     /// Write to tar file
     TarFile(std::fs::File),
+    /// Write to any stream (e.g., stdout for piping to rustltfs)
+    TarStream(Box<dyn Write>),
 }
 
 pub struct TapeWriter {
@@ -48,24 +50,73 @@ impl TapeWriter {
         })
     }
     
+    /// Create a new TapeWriter that writes to a stream (e.g., stdout)
+    /// This enables zero-temp-file streaming via PowerShell pipes:
+    /// `rumba backup --output - | rustltfs write --device TAPE0 --destination /path`
+    pub fn new_tar_stream<W: Write + 'static>(writer: W) -> Result<Self> {
+        Ok(Self {
+            output: TapeOutput::TarStream(Box::new(writer)),
+            tape_id: 0,  // tape_id not relevant for streaming
+            current_offset: 0,
+        })
+    }
+    
     /// Write the backup plan to tape/file
     /// Returns a map of file hashes to their locations on tape
     pub fn write_plan(&mut self, plan: &crate::pipeline::BackupPlan) -> Result<HashMap<Hash, BlobLocation>> {
         let mut blob_locations = HashMap::new();
         
-        // Get the writer based on output mode
-        let writer: Box<dyn Write> = match &mut self.output {
-            TapeOutput::RustLtfs(child) => {
-                Box::new(child.stdin.take().expect("Failed to get rustltfs stdin"))
-            }
-            TapeOutput::TarFile(file) => {
-                Box::new(file.try_clone()?)
-            }
-        };
+        // For TarStream, we need to take ownership of the Box<dyn Write>
+        // We'll use mem::replace to temporarily swap it out
+        let needs_stream_handling = matches!(self.output, TapeOutput::TarStream(_));
         
-        let mut tar_builder = Builder::new(writer);
+        if needs_stream_handling {
+            // Take ownership of the stream using mem::replace
+            let dummy_output = TapeOutput::TarFile(std::fs::File::create("/dev/null").unwrap_or_else(|_| {
+                // Fallback for Windows
+                std::fs::File::create("NUL").expect("Failed to create dummy file")
+            }));
+            let original_output = std::mem::replace(&mut self.output, dummy_output);
+            
+            if let TapeOutput::TarStream(stream) = original_output {
+                let mut tar_builder = Builder::new(stream);
+                self.build_tar_archive(&mut tar_builder, plan, &mut blob_locations)?;
+                tar_builder.finish()?;
+                // Don't restore output, it's consumed
+            }
+        } else {
+            // Get the writer based on output mode
+            let writer: Box<dyn Write> = match &mut self.output {
+                TapeOutput::RustLtfs(child) => {
+                    Box::new(child.stdin.take().expect("Failed to get rustltfs stdin"))
+                }
+                TapeOutput::TarFile(file) => {
+                    Box::new(file.try_clone()?)
+                }
+                TapeOutput::TarStream(_) => unreachable!(), // Handled above
+            };
+            
+            let mut tar_builder = Builder::new(writer);
+            self.build_tar_archive(&mut tar_builder, plan, &mut blob_locations)?;
+            tar_builder.finish()?;
+        }
         
+        Ok(blob_locations)
+    }
+    
+    /// Helper method to build tar archive (extracted for reuse)
+    fn build_tar_archive<W: Write>(
+        &mut self,
+        tar_builder: &mut Builder<W>,
+        plan: &crate::pipeline::BackupPlan,
+        blob_locations: &mut HashMap<Hash, BlobLocation>,
+    ) -> Result<()> {
         for (path, hash) in &plan.new_files {
+            // Deduplication: If we've already written this hash in this session, skip it.
+            if blob_locations.contains_key(hash) {
+                continue;
+            }
+
             // Record the current offset before writing
             let offset = self.current_offset;
             
@@ -100,10 +151,7 @@ impl TapeWriter {
             });
         }
         
-        // Finish the tar archive
-        tar_builder.finish()?;
-        
-        Ok(blob_locations)
+        Ok(())
     }
     
     /// Finish writing and clean up
@@ -121,6 +169,12 @@ impl TapeWriter {
                 // Sync and close the file
                 file.sync_all()?;
                 drop(file);
+                Ok(())
+            }
+            TapeOutput::TarStream(mut stream) => {
+                // Flush the stream to ensure all data is written
+                stream.flush()?;
+                drop(stream);
                 Ok(())
             }
         }

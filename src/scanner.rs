@@ -18,13 +18,22 @@ pub struct ScannedEntry {
     pub path: PathBuf, 
 }
 
+use globset::{Glob, GlobSet, GlobSetBuilder};
+
 pub struct Scanner {
     root: PathBuf,
+    excludes: GlobSet,
 }
 
 impl Scanner {
-    pub fn new(root: PathBuf) -> Self {
-        Self { root }
+    pub fn new(root: PathBuf, exclude_patterns: &[String]) -> anyhow::Result<Self> {
+        let mut builder = GlobSetBuilder::new();
+        for pattern in exclude_patterns {
+            builder.add(Glob::new(pattern)?);
+        }
+        let excludes = builder.build()?;
+        
+        Ok(Self { root, excludes })
     }
 
     /// Scans the directory tree and sends sorted directory listings through the channel.
@@ -51,6 +60,7 @@ impl Scanner {
     /// Alternative scan using process_read_dir to capture children
     pub fn scan_parallel(&self, tx: Sender<ScannedDir>) -> anyhow::Result<()> {
         let tx = tx.clone();
+        let excludes = self.excludes.clone();
         
         WalkDir::new(&self.root)
             .process_read_dir(move |_depth, path, _state, children| {
@@ -66,8 +76,14 @@ impl Scanner {
 
                 // 2. Collect sorted entries to send
                 let mut entries = Vec::with_capacity(children.len());
+                
                 for child in children.iter() {
                     if let Ok(child) = child {
+                        if excludes.is_match(child.path()) {
+                            debug!("Skipping excluded file: {:?}", child.path());
+                            continue;
+                        }
+                        
                         entries.push(ScannedEntry {
                             name: child.file_name().to_string_lossy().to_string(),
                             is_dir: child.file_type().is_dir(),
@@ -111,7 +127,7 @@ mod tests {
         fs::create_dir(root.join("b_dir").join("sub_a"))?;
         fs::write(root.join("b_dir").join("sub_b.txt"), "content")?;
 
-        let scanner = Scanner::new(root.to_path_buf());
+        let scanner = Scanner::new(root.to_path_buf(), &[])?;
         let (tx, rx) = mpsc::channel();
 
         scanner.scan_parallel(tx)?;

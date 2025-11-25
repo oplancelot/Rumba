@@ -7,3 +7,5 @@ config_test.toml
 /tests
 
 /dev
+.agent
+/examples

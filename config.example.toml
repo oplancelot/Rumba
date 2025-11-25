@@ -3,33 +3,35 @@
 
 [source]
 # SMB share URL to backup from
-# Windows UNC path format: \\server\share\path
-url = "\\\\10.202.182.2\\ito\\監視チーム"
+url = "\\\\server\\share\\path"
 
-# SMB credentials
-username = "YIDA014"
+# SMB authentication
+username = "backup_user"
 
-# Password can be plain text or base64 encoded with "base64:" prefix
-# To encode a password, run: cargo run --bin rumba -- encode-password "your_password"
-# Plain text (not recommended for production):
-# password = "your_password"
-# Base64 encoded (provides basic obfuscation):
-password = "base64:TkBoZW1dvZ2lxcDE="
+# Password (can be plain text or base64 encoded with "base64:" prefix)
+# Use: rumba encode-password "your_password" to generate encoded password
+password = "your_password_here"
+
+# Glob patterns to exclude from backup
+excludes = [
+    "**/*.tmp",
+    "**/*.cache",
+    "**/Thumbs.db",
+]
 
 [target]
 # Output mode: "rustltfs" or "tar"
-# - "rustltfs": Stream data to rustltfs process (default, for real tape backup)
+# - "rustltfs": Stream data to rustltfs process (for real tape backup)
 # - "tar": Write to local tar file (for testing or disk backup)
-output_mode = "rustltfs"
+output_mode = "tar"
 
 # Path to rustltfs binary (only used in rustltfs mode)
-# Default: "rustltfs" (looks in PATH)
 rustltfs_path = "rustltfs"
 
 # Tape device path or tar file path (depends on output_mode)
-# - In rustltfs mode: device path like "/dev/nst0" or "\\.\TAPE0" (Windows)
-# - In tar mode: local file path like "tape_drive.tar"
-tape_path = "/dev/nst0"
+# - In rustltfs mode: device path like "/dev/nst0" or "\\\\.\\TAPE0" (Windows)
+# - In tar mode: local file path like "backup.tar"
+tape_path = "backup.tar"
 
 # Path to the metadata database
 db_path = "backup_meta.redb"
@@ -40,3 +42,34 @@ db_path = "backup_meta.redb"
 
 # Zstd compression level (0-22, higher = better compression but slower)
 # compression_level = 3
+
+[tape]
+# Tape device configuration (for PowerShell streaming scripts)
+
+# Tape device path
+# Windows: "\\\\.\\TAPE0"
+# Linux: "/dev/sg0"
+device = "\\\\.\\TAPE0"
+
+# Path to rumba executable (for PowerShell scripts)
+# Default: "rumba" (looks in PATH)
+rumba_path = "rumba"
+
+# Path to rustltfs executable
+# Default: "rustltfs" (looks in PATH)
+rustltfs_path = "rustltfs"
+
+# Path to database file for backup
+database_path = "rumba.db"
+
+# Skip database backup in streaming mode
+skip_database = false
+
+# Email notification settings
+email_notification = false
+
+# Email recipient (required if email_notification = true)
+# email_to = "admin@company.com"
+
+# SMTP server (required if email_notification = true)
+# smtp_server = "smtp.company.com"
