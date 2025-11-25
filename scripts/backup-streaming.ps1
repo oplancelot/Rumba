@@ -22,9 +22,9 @@ $LogFile = Join-Path $LogDir "backup_$SessionId.log"
 Start-Transcript -Path $LogFile -Append
 
 Write-Host ""
-Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║       Rumba Streaming Tape Backup v3.0                    ║" -ForegroundColor Cyan
-Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host "==============================================================" -ForegroundColor Cyan
+Write-Host "       Rumba Streaming Tape Backup v3.0                       " -ForegroundColor Cyan
+Write-Host "==============================================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Simple TOML parser
@@ -46,9 +46,15 @@ function Get-TomlValue {
             $inSection = $false
         }
         
-        $pattern = '^' + $Key + '\s*=\s*"?([^"]+)"?'
-        if ($inSection -and $line -match $pattern) {
-            return $matches[1].Trim('"')
+        # Simplified regex to avoid parser issues
+        # Matches: key = "value" or key = value
+        if ($inSection -and $line -match "^$Key\s*=\s*") {
+            # Split by = and take the second part
+            $parts = $line -split '=', 2
+            if ($parts.Count -eq 2) {
+                # Trim whitespace and quotes
+                return $parts[1].Trim().Trim('"').Trim("'")
+            }
         }
     }
     
@@ -57,7 +63,7 @@ function Get-TomlValue {
 
 try {
     # Read configuration
-    Write-Host "📄 Reading config: $ConfigFile" -ForegroundColor Cyan
+    Write-Host "Reading config: $ConfigFile" -ForegroundColor Cyan
     
     $TapeDevice = Get-TomlValue -File $ConfigFile -Section "tape" -Key "device"
     $RumbaPath = Get-TomlValue -File $ConfigFile -Section "tape" -Key "rumba_path"
@@ -71,19 +77,19 @@ try {
     if (-not $RustLtfsPath) { $RustLtfsPath = "rustltfs" }
     if (-not $DatabasePath) { $DatabasePath = "rumba.db" }
     
-    Write-Host "✅ Config loaded" -ForegroundColor Green
+    Write-Host "Config loaded" -ForegroundColor Green
     Write-Host "   Tape device: $TapeDevice" -ForegroundColor White
     Write-Host "   Database: $DatabasePath" -ForegroundColor White
     Write-Host ""
     
     # Step 1: Stream tar to tape
-    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
-    Write-Host "📦 Streaming tar to tape" -ForegroundColor Cyan
-    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "--------------------------------------------------------------" -ForegroundColor Cyan
+    Write-Host "Streaming tar to tape" -ForegroundColor Cyan
+    Write-Host "--------------------------------------------------------------" -ForegroundColor Cyan
     
     $TarDest = "/incremental_$Date/backup_$SessionId.tar"
     Write-Host "   Destination: $TarDest" -ForegroundColor White
-    Write-Host "   ⚡ Starting stream..." -ForegroundColor Yellow
+    Write-Host "   Starting stream..." -ForegroundColor Yellow
     Write-Host ""
     
     & $RumbaPath backup --config $ConfigFile --format tar --output - | `
@@ -94,14 +100,14 @@ try {
     }
     
     Write-Host ""
-    Write-Host "   ✅ Tar backup complete" -ForegroundColor Green
+    Write-Host "   Tar backup complete" -ForegroundColor Green
     
     # Step 2: Backup database
     if ($SkipDb -ne "true" -and (Test-Path $DatabasePath)) {
         Write-Host ""
-        Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
-        Write-Host "💾 Writing database" -ForegroundColor Cyan
-        Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+        Write-Host "--------------------------------------------------------------" -ForegroundColor Cyan
+        Write-Host "Writing database" -ForegroundColor Cyan
+        Write-Host "--------------------------------------------------------------" -ForegroundColor Cyan
         
         $DbDest = "/incremental_$Date/database/rumba_$SessionId.db"
         Write-Host "   Destination: $DbDest" -ForegroundColor White
@@ -111,29 +117,29 @@ try {
         
         if ($LASTEXITCODE -eq 0) {
             Write-Host ""
-            Write-Host "   ✅ Database backup complete" -ForegroundColor Green
+            Write-Host "   Database backup complete" -ForegroundColor Green
         }
     }
     
     # Complete
     Write-Host ""
-    Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Green
-    Write-Host "║                  ✅ Backup successful!                     ║" -ForegroundColor Green
-    Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Green
+    Write-Host "==============================================================" -ForegroundColor Green
+    Write-Host "                  Backup successful!                          " -ForegroundColor Green
+    Write-Host "==============================================================" -ForegroundColor Green
     Write-Host ""
     
 }
 catch {
     Write-Host ""
-    Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Red
-    Write-Host "║                  ❌ Backup failed!                         ║" -ForegroundColor Red
-    Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Red
+    Write-Host "==============================================================" -ForegroundColor Red
+    Write-Host "                  Backup failed!                              " -ForegroundColor Red
+    Write-Host "==============================================================" -ForegroundColor Red
     Write-Host ""
     Write-Host "   Error: $_" -ForegroundColor Red
     exit 1
 }
 finally {
     Stop-Transcript
-    Write-Host "📝 Log: $LogFile" -ForegroundColor Cyan
+    Write-Host "Log: $LogFile" -ForegroundColor Cyan
     Write-Host ""
 }
