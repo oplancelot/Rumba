@@ -59,6 +59,9 @@ device = "\\\\.\\TAPE0"
 # Default: "rumba" (looks in PATH)
 rumba_path = "rumba.exe"
 
+# Path to rustltfs executable (for PowerShell scripts)
+# Default: "rustltfs" (looks in PATH)
+rustltfs_path = "rustltfs.exe"
 # Skip database backup in streaming mode
 skip_database = true
 
