@@ -57,7 +57,7 @@ device = "\\\\.\\TAPE0"
 
 # Path to rumba executable (for PowerShell scripts)
 # Default: "rumba" (looks in PATH)
-rumba_path = "rumba"
+rumba_path = "rumba.exe"
 
 # Skip database backup in streaming mode
 skip_database = true

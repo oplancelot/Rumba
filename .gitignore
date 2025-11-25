@@ -9,3 +9,4 @@ config_test.toml
 /dev
 .agent
 /examples
+*.txt
