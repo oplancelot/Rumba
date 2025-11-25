@@ -1,13 +1,10 @@
 use anyhow::Result;
 use std::io::Write;
-use std::process::{Command, Stdio, Child};
 use tar::Builder;
 use std::collections::HashMap;
 use crate::models::{Hash, BlobLocation};
 
 pub enum TapeOutput {
-    /// Write to rustltfs process via pipe
-    RustLtfs(Child),
     /// Write to tar file
     TarFile(std::fs::File),
     /// Write to any stream (e.g., stdout for piping to rustltfs)
@@ -21,24 +18,6 @@ pub struct TapeWriter {
 }
 
 impl TapeWriter {
-    /// Create a new TapeWriter that pipes to rustltfs process
-    pub fn new_rustltfs(rustltfs_path: &str, device_path: &str, tape_id: u64) -> Result<Self> {
-        let child = Command::new(rustltfs_path)
-            .arg("write")
-            .arg("--device")
-            .arg(device_path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        
-        Ok(Self {
-            output: TapeOutput::RustLtfs(child),
-            tape_id,
-            current_offset: 0,
-        })
-    }
-    
     /// Create a new TapeWriter that writes to a tar file
     pub fn new_tar_file(file_path: &str, tape_id: u64) -> Result<Self> {
         let file = std::fs::File::create(file_path)?;
@@ -96,9 +75,6 @@ impl TapeWriter {
         } else {
             // Get the writer based on output mode
             let writer: Box<dyn Write> = match &mut self.output {
-                TapeOutput::RustLtfs(child) => {
-                    Box::new(child.stdin.take().expect("Failed to get rustltfs stdin"))
-                }
                 TapeOutput::TarFile(file) => {
                     Box::new(file.try_clone()?)
                 }
@@ -174,14 +150,6 @@ impl TapeWriter {
     /// Finish writing and clean up
     pub fn finish(self) -> Result<()> {
         match self.output {
-            TapeOutput::RustLtfs(mut child) => {
-                // Wait for rustltfs process to complete
-                let status = child.wait()?;
-                if !status.success() {
-                    anyhow::bail!("rustltfs process failed with status: {}", status);
-                }
-                Ok(())
-            }
             TapeOutput::TarFile(file) => {
                 // Sync and close the file
                 // Ignore "Incorrect function" which might happen for NUL device
