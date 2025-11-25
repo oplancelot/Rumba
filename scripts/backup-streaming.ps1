@@ -71,10 +71,10 @@ try {
     $SkipDb = Get-TomlValue -File $ConfigFile -Section "tape" -Key "skip_database"
     
     # Default values
-    if (-not $TapeDevice) { $TapeDevice = "\\\\.\\TAPE0" }
-    if (-not $RumbaPath) { $RumbaPath = "rumba" }
-    if (-not $RustLtfsPath) { $RustLtfsPath = "rustltfs" }
-    if (-not $DatabasePath) { $DatabasePath = "rumba.db" }
+    if (-not $TapeDevice) { $TapeDevice = "\\\\.\\TAPE1" }
+    if (-not $RumbaPath) { $RumbaPath = ".\\rumba" }
+    if (-not $RustLtfsPath) { $RustLtfsPath = ".\\rustltfs" }
+    if (-not $DatabasePath) { $DatabasePath = ".\\rumba.db" }
     
     Write-Host "Config loaded" -ForegroundColor Green
     Write-Host "   Tape device: $TapeDevice" -ForegroundColor White
@@ -91,8 +91,15 @@ try {
     Write-Host "   Starting stream..." -ForegroundColor Yellow
     Write-Host ""
     
-    & $RumbaPath backup --config $ConfigFile --format tar --output - | `
-        & $RustLtfsPath write --device $TapeDevice --destination $TarDest --verify --progress
+    # Resolve paths to absolute to ensure cmd finds them
+    $AbsRumbaPath = (Resolve-Path $RumbaPath).Path
+    $AbsRustLtfsPath = (Resolve-Path $RustLtfsPath).Path
+    $AbsConfigFile = (Resolve-Path $ConfigFile).Path
+    
+    # Use cmd /c for binary safe piping to avoid PowerShell encoding issues
+    # Note: rustltfs write uses --tape and --output, not --device and --destination
+    $Command = "cmd /c `"$AbsRumbaPath backup --config $AbsConfigFile --format tar --output - | $AbsRustLtfsPath write --tape $TapeDevice --output $TarDest --verify --progress`""
+    Invoke-Expression $Command
     
     if ($LASTEXITCODE -ne 0) {
         throw "Backup failed"
@@ -112,7 +119,7 @@ try {
         Write-Host "   Destination: $DbDest" -ForegroundColor White
         Write-Host ""
         
-        & $RustLtfsPath write --device $TapeDevice --source $DatabasePath --destination $DbDest --verify --progress
+        & $RustLtfsPath write --tape $TapeDevice --output $DbDest --verify --progress $DatabasePath
         
         if ($LASTEXITCODE -eq 0) {
             Write-Host ""
