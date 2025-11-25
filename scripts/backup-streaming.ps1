@@ -66,8 +66,8 @@ try {
     
     $TapeDevice = Get-TomlValue -File $ConfigFile -Section "tape" -Key "device"
     $RumbaPath = Get-TomlValue -File $ConfigFile -Section "tape" -Key "rumba_path"
-    $RustLtfsPath = Get-TomlValue -File $ConfigFile -Section "tape" -Key "rustltfs_path"
-    $DatabasePath = Get-TomlValue -File $ConfigFile -Section "tape" -Key "database_path"
+    $RustLtfsPath = Get-TomlValue -File $ConfigFile -Section "target" -Key "rustltfs_path"
+    $DatabasePath = Get-TomlValue -File $ConfigFile -Section "target" -Key "db_path"
     $SkipDb = Get-TomlValue -File $ConfigFile -Section "tape" -Key "skip_database"
     
     # Default values

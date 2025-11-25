@@ -57,7 +57,7 @@ These PowerShell scripts are used to write Rumba backups to LTFS tape and restor
 
 | Parameter | Required | Description | Default |
 |-----------|----------|-------------|---------|
-| `-ConfigFile` | ✅ | Rumba configuration file path | - |
+| `-ConfigFile` | ✅ | Rumba configuration file path | `config.toml` |
 | `-LogDir` | ❌ | Log directory | `.\logs` |
 
 All other parameters (tape device, paths, etc.) are read from the config file `[tape]` section.
@@ -233,7 +233,7 @@ Get-Content .\logs\backup_20251125_080639.log
 
 ```powershell
 # Check tape space
-rustltfs space --device \\.\TAPE0 --detailed
+rustltfs space --tape \\.\TAPE0 --detailed
 ```
 
 ### 4. Log Rotation
@@ -282,8 +282,9 @@ For issues, check:
 
 ## Changelog
 
-- **v3.0** (2025-11-25)
+- **v1.0** (2025-11-25)
   - Config-driven parameters
   - Simplified usage
   - Zero temp files streaming
   - Full error handling
+

@@ -86,8 +86,12 @@ fn main() -> Result<()> {
 
     
     // 1. Initialize Infrastructure
-    let db = db::BackupDb::new(&config.target.db_path)?;
-    info!("Database initialized at {}", config.target.db_path);
+    // For non-streaming mode, target config is required
+    let target = config.target.as_ref()
+        .ok_or_else(|| anyhow::anyhow!("[target] section is required in config for non-streaming mode"))?;
+    
+    let db = db::BackupDb::new(&target.db_path)?;
+    info!("Database initialized at {}", target.db_path);
 
     // 2. Run Pipeline (Scan -> Diff -> Plan)
     let root_path = config.get_backup_root()?;
@@ -106,30 +110,21 @@ fn main() -> Result<()> {
     }
 
     // 3. Initialize Tape Writer based on output mode
-    let mut tape_writer = match config.target.output_mode.as_str() {
-        "rustltfs" => {
-            info!("Output mode: rustltfs (streaming to {})", config.target.tape_path);
-            info!("Using rustltfs binary: {}", config.target.rustltfs_path);
-            tape::TapeWriter::new_rustltfs(
-                &config.target.rustltfs_path,
-                &config.target.tape_path,
-                1  // Tape ID 1
-            )?
+    let mut tape_writer = match target.output_mode.as_str() {
+        "stream" => {
+            info!("Output mode: stream (to stdout)");
+            tape::TapeWriter::new_tar_stream(std::io::stdout())?
         }
         "tar" => {
-            // Generate timestamped tar filename
-            let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-            let tar_path = if config.target.tape_path.ends_with(".tar") {
-                config.target.tape_path.replace(".tar", &format!("_{}.tar", timestamp))
-            } else {
-                format!("{}_{}.tar", config.target.tape_path, timestamp)
-            };
+            // Format tar path with current date/time
+            let now = chrono::Local::now();
+            let tar_path = now.format(&target.tar_path).to_string();
             
             info!("Output mode: tar file (writing to {})", tar_path);
             tape::TapeWriter::new_tar_file(&tar_path, 1)?
         }
         _ => {
-            anyhow::bail!("Invalid output mode: {}", config.target.output_mode);
+            anyhow::bail!("Invalid output mode: {}", target.output_mode);
         }
     };
 
@@ -205,12 +200,9 @@ fn main() -> Result<()> {
     info!("========================================");
     info!("Configuration:");
     info!("  Source: {}", config.source.url);
-    info!("  Output mode: {}", config.target.output_mode);
-    if config.target.output_mode == "rustltfs" {
-        info!("  Rustltfs: {}", config.target.rustltfs_path);
-        info!("  Device: {}", config.target.tape_path);
-    } else {
-        info!("  Tar file: {}", config.target.tape_path);
+    info!("  Output mode: {}", target.output_mode);
+    if target.output_mode == "tar" {
+        info!("  Tar file: {}", target.tar_path);
     }
     info!("");
     info!("Backup Summary:");
@@ -248,8 +240,11 @@ fn run_backup_command(config_path: &str, output: &Option<String>, format: &str, 
     eprintln!("Rumba: Configuration loaded from: {}", config_path);
     eprintln!("Rumba: Source: {}", config.source.url);
     
-    // Initialize database
-    let db = db::BackupDb::new(&config.target.db_path)?;
+    // Initialize database - use target.db_path if available, otherwise default
+    let db_path = config.target.as_ref()
+        .map(|t| t.db_path.clone())
+        .unwrap_or_else(|| "rumba.db".to_string());
+    let db = db::BackupDb::new(&db_path)?;
     eprintln!("Rumba: Database initialized");
     
     // Run pipeline

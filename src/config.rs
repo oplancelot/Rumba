@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub source: SourceConfig,
-    pub target: TargetConfig,
+    #[serde(default)]
+    pub target: Option<TargetConfig>,
     #[serde(default)]
     pub backup: BackupConfig,
     #[serde(default)]
@@ -30,19 +31,14 @@ pub struct SourceConfig {
 /// Backup target configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TargetConfig {
-    /// Output mode: "rustltfs" (pipe to rustltfs process) or "tar" (write to tar file)
+    /// Output mode: "tar" (write to tar file) or "stream" (output to stdout)
     #[serde(default = "default_output_mode")]
     pub output_mode: String,
     
-    /// Path to rustltfs binary (only used when output_mode = "rustltfs")
-    #[serde(default = "default_rustltfs_path")]
-    pub rustltfs_path: String,
-    
-    /// Path to the tape device or file for backup (used differently based on output_mode)
-    /// - rustltfs mode: device path passed to rustltfs (e.g., "/dev/nst0")
-    /// - tar mode: local tar file path (e.g., "tape_drive.tar")
-    #[serde(default = "default_tape_path")]
-    pub tape_path: String,
+    /// Path to tar file (only used when output_mode = "tar")
+    /// Supports date formatting with strftime, e.g., "backup_%Y%m%d.tar"
+    #[serde(default = "default_tar_path")]
+    pub tar_path: String,
     
     /// Path to the metadata database
     #[serde(default = "default_db_path")]
@@ -71,14 +67,6 @@ pub struct TapeConfig {
     #[serde(default = "default_rumba_path")]
     pub rumba_path: String,
     
-    /// Path to rustltfs executable
-    #[serde(default = "default_rustltfs_path")]
-    pub rustltfs_path: String,
-    
-    /// Path to database file for backup metadata
-    #[serde(default = "default_db_path")]
-    pub database_path: String,
-    
     /// Skip database backup in streaming mode
     #[serde(default)]
     pub skip_database: bool,
@@ -98,19 +86,15 @@ pub struct TapeConfig {
 
 // Default values
 fn default_output_mode() -> String {
-    "rustltfs".to_string()
+    "stream".to_string()
 }
 
-fn default_rustltfs_path() -> String {
-    "rustltfs".to_string()
-}
-
-fn default_tape_path() -> String {
-    "tape_drive.tar".to_string()
+fn default_tar_path() -> String {
+    "backup_%Y%m%d_%H%M%S.tar".to_string()
 }
 
 fn default_db_path() -> String {
-    "backup_meta.redb".to_string()
+    "rumba.db".to_string()
 }
 
 fn default_parallel_threads() -> usize {
@@ -147,8 +131,6 @@ impl Default for TapeConfig {
         Self {
             device: default_tape_device(),
             rumba_path: default_rumba_path(),
-            rustltfs_path: default_rustltfs_path(),
-            database_path: default_db_path(),
             skip_database: false,
             email_notification: false,
             email_to: None,
@@ -190,9 +172,12 @@ impl Config {
             bail!("Source password cannot be empty");
         }
         
-        // Validate output mode
-        if self.target.output_mode != "rustltfs" && self.target.output_mode != "tar" {
-            bail!("Output mode must be either 'rustltfs' or 'tar', got: {}", self.target.output_mode);
+        // Validate target config if present
+        if let Some(target) = &self.target {
+            // Validate output mode
+            if target.output_mode != "tar" && target.output_mode != "stream" {
+                bail!("Output mode must be either 'tar' or 'stream', got: {}", target.output_mode);
+            }
         }
         
         if self.backup.compression_level < 0 || self.backup.compression_level > 22 {
