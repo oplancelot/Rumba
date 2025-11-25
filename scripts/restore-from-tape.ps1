@@ -1,31 +1,31 @@
-# Rumba 磁带恢复脚本
-# 功能: 从磁带恢复备份数据
-# 作者: Rumba Team
-# 版本: 1.0
+# Rumba Tape Restore Script
+# Function: Restore backup data from tape
+# Author: Rumba Team
+# Version: 1.0
 
 param(
-    [Parameter(Mandatory=$true, HelpMessage="磁带设备路径")]
+    [Parameter(Mandatory = $true, HelpMessage = "Tape device path")]
     [string]$TapeDevice,
     
-    [Parameter(Mandatory=$true, HelpMessage="恢复目标目录")]
+    [Parameter(Mandatory = $true, HelpMessage = "Restore destination directory")]
     [string]$RestoreDir,
     
-    [Parameter(HelpMessage="要恢复的备份日期 (YYYYMMDD格式)")]
+    [Parameter(HelpMessage = "Backup date to restore (YYYYMMDD format)")]
     [string]$BackupDate,
     
-    [Parameter(HelpMessage="要恢复的会话ID (YYYYMMDD_HHMMSS格式)")]
+    [Parameter(HelpMessage = "Session ID to restore (YYYYMMDD_HHMMSS format)")]
     [string]$SessionId,
     
-    [Parameter(HelpMessage="rustltfs可执行文件路径")]
+    [Parameter(HelpMessage = "Path to rustltfs executable")]
     [string]$RustLtfsPath = "rustltfs",
     
-    [Parameter(HelpMessage="只恢复数据库")]
+    [Parameter(HelpMessage = "Restore database only")]
     [switch]$DatabaseOnly,
     
-    [Parameter(HelpMessage="只恢复tar文件")]
+    [Parameter(HelpMessage = "Restore tar file only")]
     [switch]$TarOnly,
     
-    [Parameter(HelpMessage="列出可用的备份")]
+    [Parameter(HelpMessage = "List available backups")]
     [switch]$List
 )
 
@@ -33,78 +33,78 @@ $ErrorActionPreference = "Stop"
 
 Write-Host ""
 Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║          Rumba 磁带恢复系统 v1.0                          ║" -ForegroundColor Cyan
+Write-Host "║          Rumba Tape Restore System v1.0                   ║" -ForegroundColor Cyan
 Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
 
 # ============================================================================
-# 列出可用备份
+# List available backups
 # ============================================================================
 
 if ($List) {
-    Write-Host "📋 列出磁带上的备份..." -ForegroundColor Cyan
+    Write-Host "📋 Listing backups on tape..." -ForegroundColor Cyan
     Write-Host ""
     
     & $RustLtfsPath read --device $TapeDevice
     
     Write-Host ""
-    Write-Host "提示: 使用 -BackupDate 和 -SessionId 参数指定要恢复的备份" -ForegroundColor Yellow
+    Write-Host "Tip: Use -BackupDate and -SessionId parameters to specify backup to restore" -ForegroundColor Yellow
     exit 0
 }
 
 # ============================================================================
-# 验证参数
+# Validate parameters
 # ============================================================================
 
 if ([string]::IsNullOrEmpty($BackupDate)) {
-    Write-Host "❌ 错误: 必须指定 -BackupDate 参数" -ForegroundColor Red
-    Write-Host "   使用 -List 参数查看可用的备份" -ForegroundColor Yellow
+    Write-Host "❌ Error: -BackupDate parameter is required" -ForegroundColor Red
+    Write-Host "   Use -List parameter to view available backups" -ForegroundColor Yellow
     exit 1
 }
 
 if ([string]::IsNullOrEmpty($SessionId)) {
-    Write-Host "❌ 错误: 必须指定 -SessionId 参数" -ForegroundColor Red
-    Write-Host "   使用 -List 参数查看可用的备份" -ForegroundColor Yellow
+    Write-Host "❌ Error: -SessionId parameter is required" -ForegroundColor Red
+    Write-Host "   Use -List parameter to view available backups" -ForegroundColor Yellow
     exit 1
 }
 
 # ============================================================================
-# 恢复流程
+# Restore Process
 # ============================================================================
 
 $IncrementalDir = "/incremental_$BackupDate"
 $TarSource = "$IncrementalDir/backup_$SessionId.tar"
 $DbSource = "$IncrementalDir/database/rumba_$SessionId.db"
 
-Write-Host "📅 备份日期:   $BackupDate" -ForegroundColor White
-Write-Host "🆔 会话ID:     $SessionId" -ForegroundColor White
-Write-Host "📼 磁带设备:   $TapeDevice" -ForegroundColor White
-Write-Host "📁 恢复目录:   $RestoreDir" -ForegroundColor White
+Write-Host "📅 Backup Date:   $BackupDate" -ForegroundColor White
+Write-Host "🆔 Session ID:    $SessionId" -ForegroundColor White
+Write-Host "📼 Tape Device:   $TapeDevice" -ForegroundColor White
+Write-Host "📁 Restore Dir:   $RestoreDir" -ForegroundColor White
 Write-Host ""
 
-# 创建恢复目录
+# Create restore directory
 if (-not (Test-Path $RestoreDir)) {
     New-Item -ItemType Directory -Path $RestoreDir | Out-Null
-    Write-Host "✅ 恢复目录已创建: $RestoreDir" -ForegroundColor Green
+    Write-Host "✅ Restore directory created: $RestoreDir" -ForegroundColor Green
 }
 
 try {
     # ========================================
-    # 恢复 tar 文件
+    # Restore tar file
     # ========================================
     if (-not $DatabaseOnly) {
         Write-Host ""
         Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
-        Write-Host "📦 恢复 tar 备份文件" -ForegroundColor Cyan
+        Write-Host "📦 Restoring tar backup file" -ForegroundColor Cyan
         Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
         
         $TarDest = Join-Path $RestoreDir "backup_$SessionId.tar"
         
-        Write-Host "   源路径: $TarSource" -ForegroundColor White
-        Write-Host "   目标路径: $TarDest" -ForegroundColor White
+        Write-Host "   Source: $TarSource" -ForegroundColor White
+        Write-Host "   Destination: $TarDest" -ForegroundColor White
         Write-Host ""
         
-        # 从磁带提取tar文件
+        # Extract tar file from tape
         & $RustLtfsPath extract `
             --device $TapeDevice `
             --source $TarSource `
@@ -112,47 +112,48 @@ try {
             --progress
         
         if ($LASTEXITCODE -ne 0) {
-            throw "提取 tar 文件失败,退出码: $LASTEXITCODE"
+            throw "Failed to extract tar file, exit code: $LASTEXITCODE"
         }
         
         Write-Host ""
-        Write-Host "   ✅ tar 文件已恢复: $TarDest" -ForegroundColor Green
+        Write-Host "   ✅ Tar file restored: $TarDest" -ForegroundColor Green
         
-        # 解压tar文件
+        # Extract tar content
         Write-Host ""
-        Write-Host "   📂 解压 tar 文件..." -ForegroundColor Cyan
+        Write-Host "   📂 Extracting tar file..." -ForegroundColor Cyan
         
         $ExtractDir = Join-Path $RestoreDir "extracted"
         if (-not (Test-Path $ExtractDir)) {
             New-Item -ItemType Directory -Path $ExtractDir | Out-Null
         }
         
-        # 使用tar命令解压 (需要安装tar工具)
+        # Use tar command to extract (requires tar tool installed)
         tar -xf $TarDest -C $ExtractDir
         
         if ($LASTEXITCODE -eq 0) {
-            Write-Host "   ✅ tar 文件已解压到: $ExtractDir" -ForegroundColor Green
-        } else {
-            Write-Host "   ⚠️  tar 解压失败,请手动解压: $TarDest" -ForegroundColor Yellow
+            Write-Host "   ✅ Tar file extracted to: $ExtractDir" -ForegroundColor Green
+        }
+        else {
+            Write-Host "   ⚠️  Tar extraction failed, please extract manually: $TarDest" -ForegroundColor Yellow
         }
     }
     
     # ========================================
-    # 恢复数据库
+    # Restore database
     # ========================================
     if (-not $TarOnly) {
         Write-Host ""
         Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
-        Write-Host "💾 恢复数据库" -ForegroundColor Cyan
+        Write-Host "💾 Restoring database" -ForegroundColor Cyan
         Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
         
         $DbDest = Join-Path $RestoreDir "rumba_$SessionId.db"
         
-        Write-Host "   源路径: $DbSource" -ForegroundColor White
-        Write-Host "   目标路径: $DbDest" -ForegroundColor White
+        Write-Host "   Source: $DbSource" -ForegroundColor White
+        Write-Host "   Destination: $DbDest" -ForegroundColor White
         Write-Host ""
         
-        # 从磁带提取数据库
+        # Extract database from tape
         & $RustLtfsPath extract `
             --device $TapeDevice `
             --source $DbSource `
@@ -160,39 +161,41 @@ try {
             --progress
         
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "   ⚠️  提取数据库失败,可能不存在" -ForegroundColor Yellow
-        } else {
+            Write-Host "   ⚠️  Failed to extract database, it may not exist" -ForegroundColor Yellow
+        }
+        else {
             Write-Host ""
-            Write-Host "   ✅ 数据库已恢复: $DbDest" -ForegroundColor Green
+            Write-Host "   ✅ Database restored: $DbDest" -ForegroundColor Green
         }
     }
     
     # ========================================
-    # 完成
+    # Complete
     # ========================================
     Write-Host ""
     Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Green
-    Write-Host "║                  ✅ 恢复成功完成!                          ║" -ForegroundColor Green
+    Write-Host "║                  ✅ Restore Successful!                    ║" -ForegroundColor Green
     Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Green
     Write-Host ""
-    Write-Host "📊 恢复摘要:" -ForegroundColor White
-    Write-Host "   恢复目录: $RestoreDir" -ForegroundColor White
+    Write-Host "📊 Restore Summary:" -ForegroundColor White
+    Write-Host "   Restore Dir: $RestoreDir" -ForegroundColor White
     if (-not $DatabaseOnly) {
-        Write-Host "   tar 文件: $TarDest" -ForegroundColor White
-        Write-Host "   解压目录: $ExtractDir" -ForegroundColor White
+        Write-Host "   Tar File: $TarDest" -ForegroundColor White
+        Write-Host "   Extracted: $ExtractDir" -ForegroundColor White
     }
     if (-not $TarOnly) {
-        Write-Host "   数据库: $DbDest" -ForegroundColor White
+        Write-Host "   Database: $DbDest" -ForegroundColor White
     }
     Write-Host ""
     
-} catch {
+}
+catch {
     Write-Host ""
     Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Red
-    Write-Host "║                  ❌ 恢复失败!                              ║" -ForegroundColor Red
+    Write-Host "║                  ❌ Restore Failed!                        ║" -ForegroundColor Red
     Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Red
     Write-Host ""
-    Write-Host "   ❌ 错误信息: $_" -ForegroundColor Red
+    Write-Host "   ❌ Error: $_" -ForegroundColor Red
     Write-Host ""
     exit 1
 }
