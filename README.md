@@ -230,20 +230,9 @@ Rumba/
 - **Configuration**: TOML + serde
 - **CLI**: clap
 
-## Roadmap
-
-- [x] Streaming backup support
-- [x] PowerShell script integration
-- [x] Configuration-driven backup
-- [ ] Progress bar display
-- [ ] Detailed statistics report
-- [ ] Configuration validation tool
-- [ ] Database repair tool
-- [ ] Resume support
-
 ## License
 
-(To be determined)
+MIT
 
 ## Contributing
 
