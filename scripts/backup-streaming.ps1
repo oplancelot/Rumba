@@ -22,7 +22,7 @@ Start-Transcript -Path $LogFile -Append
 
 Write-Host ""
 Write-Host "==============================================================" -ForegroundColor Cyan
-Write-Host "       Rumba Streaming Tape Backup v3.0                       " -ForegroundColor Cyan
+Write-Host "       Rumba Streaming Tape Backup v1.0                       " -ForegroundColor Cyan
 Write-Host "==============================================================" -ForegroundColor Cyan
 Write-Host ""
 
