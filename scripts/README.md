@@ -282,9 +282,11 @@ For issues, check:
 
 ## Changelog
 
-- **v1.0** (2025-11-25)
+- **v3.0** (2025-11-25)
+  - ✨ Smart backup check: Skips tape write if no files to backup
+  - 📋 Config consolidation: `rustltfs_path` and `db_path` moved to `[target]` section
+  - 🔧 Simplified configuration structure
   - Config-driven parameters
-  - Simplified usage
   - Zero temp files streaming
   - Full error handling
 
