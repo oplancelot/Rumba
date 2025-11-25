@@ -232,4 +232,4 @@ Rumba/
 
 ## License
 
-MIT
+[MIT](LICENSE)
