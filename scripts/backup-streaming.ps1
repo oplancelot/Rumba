@@ -81,6 +81,35 @@ try {
     Write-Host "   Database: $DatabasePath" -ForegroundColor White
     Write-Host ""
     
+    # Resolve paths to absolute to ensure cmd finds them
+    $AbsRumbaPath = (Resolve-Path $RumbaPath).Path
+    $AbsRustLtfsPath = (Resolve-Path $RustLtfsPath).Path
+    $AbsConfigFile = (Resolve-Path $ConfigFile).Path
+    
+    # Step 0: Check if there are files to backup
+    Write-Host "--------------------------------------------------------------" -ForegroundColor Cyan
+    Write-Host "Checking for files to backup" -ForegroundColor Cyan
+    Write-Host "--------------------------------------------------------------" -ForegroundColor Cyan
+    Write-Host ""
+    
+    $FileCount = & $AbsRumbaPath backup --config $AbsConfigFile --check 2>$null
+    
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to check backup status"
+    }
+    
+    Write-Host "   Files to backup: $FileCount" -ForegroundColor White
+    Write-Host ""
+    
+    if ([int]$FileCount -eq 0) {
+        Write-Host ""
+        Write-Host "===============================================================" -ForegroundColor Green
+        Write-Host "       No files to backup - everything is up to date!         " -ForegroundColor Green
+        Write-Host "===============================================================" -ForegroundColor Green
+        Write-Host ""
+        return
+    }
+    
     # Step 1: Stream tar to tape
     Write-Host "--------------------------------------------------------------" -ForegroundColor Cyan
     Write-Host "Streaming tar to tape" -ForegroundColor Cyan
@@ -90,11 +119,6 @@ try {
     Write-Host "   Destination: $TarDest" -ForegroundColor White
     Write-Host "   Starting stream..." -ForegroundColor Yellow
     Write-Host ""
-    
-    # Resolve paths to absolute to ensure cmd finds them
-    $AbsRumbaPath = (Resolve-Path $RumbaPath).Path
-    $AbsRustLtfsPath = (Resolve-Path $RustLtfsPath).Path
-    $AbsConfigFile = (Resolve-Path $ConfigFile).Path
     
     # Use cmd /c for binary safe piping to avoid PowerShell encoding issues
     # Note: rustltfs write uses --tape and --output, not --device and --destination

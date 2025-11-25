@@ -41,11 +41,15 @@ enum Commands {
         /// Output path for tar archive
         /// Use "-" to output to stdout for streaming to rustltfs via pipe
         #[arg(short, long)]
-        output: String,
+        output: Option<String>,
         
         /// Output format (currently only "tar" is supported)
         #[arg(long, default_value = "tar")]
         format: String,
+        
+        /// Check mode: only check how many files need backup, don't perform backup
+        #[arg(long, default_value = "false")]
+        check: bool,
     },
 }
 
@@ -66,8 +70,8 @@ fn main() -> Result<()> {
                 return Ok(());
             }
             
-            Commands::Backup { config: config_path, output, format } => {
-                return run_backup_command(&config_path, &output, &format);
+            Commands::Backup { config: config_path, output, format, check } => {
+                return run_backup_command(&config_path, &output, &format, check);
             }
         }
     }
@@ -233,9 +237,7 @@ fn main() -> Result<()> {
 
 /// Run backup command (for streaming to stdout or file)
 /// This is used by the `backup` subcommand to support PowerShell pipe integration
-fn run_backup_command(config_path: &str, output: &str, format: &str) -> Result<()> {
-    use std::io::Write;
-    
+fn run_backup_command(config_path: &str, output: &Option<String>, format: &str, check: bool) -> Result<()> {
     // Only tar format is supported currently
     if format != "tar" {
         anyhow::bail!("Only 'tar' format is currently supported");
@@ -264,11 +266,19 @@ fn run_backup_command(config_path: &str, output: &str, format: &str) -> Result<(
         plan.total_size as f64 / 1024.0 / 1024.0
     );
     
+    if check {
+        // Output just the number of files to stdout
+        println!("{}", plan.new_files.len());
+        return Ok(());
+    }
+
     if plan.new_files.is_empty() {
         eprintln!("Rumba: Nothing to backup");
         return Ok(());
     }
     
+    let output = output.as_ref().ok_or_else(|| anyhow::anyhow!("Output path is required when not in check mode"))?;
+
     // Create tape writer based on output parameter
     let mut tape_writer = if output == "-" {
         // Stream to stdout
