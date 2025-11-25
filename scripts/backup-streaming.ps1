@@ -1,3 +1,14 @@
+# Rumba Streaming Tape Backup Script v3.0
+# Reads all parameters from config file - simple usage
+
+param(
+    [string]$ConfigFile = "config.toml",
+    
+    [string]$LogDir = ".\logs"
+)
+
+$ErrorActionPreference = "Stop"
+
 # Generate timestamps
 $Date = Get-Date -Format "yyyyMMdd"
 $SessionId = Get-Date -Format "yyyyMMdd_HHmmss"

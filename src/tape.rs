@@ -81,7 +81,16 @@ impl TapeWriter {
             if let TapeOutput::TarStream(stream) = original_output {
                 let mut tar_builder = Builder::new(stream);
                 self.build_tar_archive(&mut tar_builder, plan, &mut blob_locations)?;
-                tar_builder.finish()?;
+                if let Err(e) = tar_builder.finish() {
+                    // Ignore "Incorrect function" (os error 1) which happens on Windows pipes
+                    if let Some(os_err) = e.raw_os_error() {
+                        if os_err != 1 {
+                            return Err(e.into());
+                        }
+                    } else {
+                        return Err(e.into());
+                    }
+                }
                 // Don't restore output, it's consumed
             }
         } else {
@@ -98,7 +107,15 @@ impl TapeWriter {
             
             let mut tar_builder = Builder::new(writer);
             self.build_tar_archive(&mut tar_builder, plan, &mut blob_locations)?;
-            tar_builder.finish()?;
+            if let Err(e) = tar_builder.finish() {
+                 if let Some(os_err) = e.raw_os_error() {
+                    if os_err != 1 {
+                        return Err(e.into());
+                    }
+                } else {
+                    return Err(e.into());
+                }
+            }
         }
         
         Ok(blob_locations)
@@ -167,13 +184,21 @@ impl TapeWriter {
             }
             TapeOutput::TarFile(file) => {
                 // Sync and close the file
-                file.sync_all()?;
+                // Ignore "Incorrect function" which might happen for NUL device
+                if let Err(e) = file.sync_all() {
+                    if let Some(os_err) = e.raw_os_error() {
+                        if os_err != 1 {
+                            return Err(e.into());
+                        }
+                    }
+                }
                 drop(file);
                 Ok(())
             }
             TapeOutput::TarStream(mut stream) => {
                 // Flush the stream to ensure all data is written
-                stream.flush()?;
+                // Ignore errors on flush (e.g. "Incorrect function" on Windows pipes)
+                let _ = stream.flush();
                 drop(stream);
                 Ok(())
             }
