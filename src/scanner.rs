@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use jwalk::WalkDir;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 #[derive(Debug)]
 pub struct ScannedDir {
@@ -64,6 +64,7 @@ impl Scanner {
         
         WalkDir::new(&self.root)
             .process_read_dir(move |_depth, path, _state, children| {
+                info!("Scanning: {:?}", path);
                 // 1. Sort children deterministically by name
                 children.sort_by(|a, b| {
                     match (a, b) {

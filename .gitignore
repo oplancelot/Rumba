@@ -1,5 +1,6 @@
 /target
 *.redb
+*.db
 *.tar
 config.toml
 config_test.toml

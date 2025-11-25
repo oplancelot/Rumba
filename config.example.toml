@@ -63,5 +63,5 @@ rumba_path = "rumba.exe"
 # Default: "rustltfs" (looks in PATH)
 rustltfs_path = "rustltfs.exe"
 # Skip database backup in streaming mode
-skip_database = true
+skip_database = false
 

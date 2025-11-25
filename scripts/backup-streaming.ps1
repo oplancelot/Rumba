@@ -86,16 +86,25 @@ try {
     $AbsRustLtfsPath = (Resolve-Path $RustLtfsPath).Path
     $AbsConfigFile = (Resolve-Path $ConfigFile).Path
     
+    
     # Step 0: Check if there are files to backup
     Write-Host "--------------------------------------------------------------" -ForegroundColor Cyan
     Write-Host "Checking for files to backup" -ForegroundColor Cyan
     Write-Host "--------------------------------------------------------------" -ForegroundColor Cyan
     Write-Host ""
     
-    $FileCount = & $AbsRumbaPath backup --config $AbsConfigFile --check 2>$null
+    # Temporarily allow stderr output (rumba writes diagnostics to stderr)
+    $prevErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    
+    # Capture stdout only (file count), let stderr go to console
+    $FileCount = & $AbsRumbaPath backup --config $AbsConfigFile --check 2>&1 | Where-Object { $_ -is [string] -and $_ -match '^\d+$' }
+    
+    # Restore error preference
+    $ErrorActionPreference = $prevErrorActionPreference
     
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to check backup status"
+        throw "Failed to check backup status (exit code: $LASTEXITCODE)"
     }
     
     Write-Host "   Files to backup: $FileCount" -ForegroundColor White
