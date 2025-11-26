@@ -71,10 +71,28 @@ try {
     $SkipDb = Get-TomlValue -File $ConfigFile -Section "tape" -Key "skip_database"
     
     # Default values
-    if (-not $TapeDevice) { $TapeDevice = "\\\\.\\TAPE1" }
-    if (-not $RumbaPath) { $RumbaPath = ".\\rumba.exe" }
-    if (-not $RustLtfsPath) { $RustLtfsPath = ".\\rustltfs.exe" }
-    if (-not $DatabasePath) { $DatabasePath = ".\\rumba.db" }
+    # Default values based on script location
+    $ScriptRoot = $PSScriptRoot
+    
+    if (-not $RumbaPath) { 
+        if (Test-Path "$ScriptRoot\..\rumba.exe") {
+            $RumbaPath = "$ScriptRoot\..\rumba.exe"
+        }
+        else {
+            $RumbaPath = "rumba.exe" 
+        }
+    }
+    
+    if (-not $RustLtfsPath) { 
+        if (Test-Path "$ScriptRoot\..\rustltfs.exe") {
+            $RustLtfsPath = "$ScriptRoot\..\rustltfs.exe"
+        }
+        else {
+            $RustLtfsPath = "rustltfs.exe" 
+        }
+    }
+    
+    if (-not $DatabasePath) { $DatabasePath = "rumba.db" }
     
     Write-Host "Config loaded" -ForegroundColor Green
     Write-Host "   Tape device: $TapeDevice" -ForegroundColor White
