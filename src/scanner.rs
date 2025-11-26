@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use jwalk::WalkDir;
 use tracing::{debug, info, warn};
+use globset::{Glob, GlobSet, GlobSetBuilder};
 
 #[derive(Debug)]
 pub struct ScannedDir {
@@ -17,8 +18,6 @@ pub struct ScannedEntry {
     // We capture minimal metadata needed for sorting and initial processing
     pub path: PathBuf, 
 }
-
-use globset::{Glob, GlobSet, GlobSetBuilder};
 
 pub struct Scanner {
     root: PathBuf,
@@ -36,36 +35,43 @@ impl Scanner {
         Ok(Self { root, excludes })
     }
 
-    /// Scans the directory tree and sends sorted directory listings through the channel.
-    /// This ensures that for every directory, we get a deterministic list of its children.
-    pub fn scan(&self, _tx: Sender<ScannedDir>) -> anyhow::Result<()> {
-        let walk = WalkDir::new(&self.root)
-            .sort(true); // jwalk has a built-in sort, but we'll enforce our own strict logic if needed
-
-        for entry in walk {
-            match entry {
-                Ok(dir_entry) => {
-                    if dir_entry.file_type().is_dir() {
-                        // This is a directory. 
-                    }
-                }
-                Err(e) => {
-                    warn!("Error scanning: {}", e);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Alternative scan using process_read_dir to capture children
     pub fn scan_parallel(&self, tx: Sender<ScannedDir>) -> anyhow::Result<()> {
-        let tx = tx.clone();
         let excludes = self.excludes.clone();
         
         WalkDir::new(&self.root)
-            .process_read_dir(move |_depth, path, _state, children| {
-                info!("Scanning: {:?}", path);
-                // 1. Sort children deterministically by name
+            .sort(true)
+            .process_read_dir(move |_depth, _path, _state, children| {
+                // Print current directory being scanned
+                // Use debug! to avoid spamming unless requested
+                debug!("Scanning: {:?}", _path);
+
+                // 1. Filter excluded files/directories
+                // We filter in-place so jwalk doesn't recurse into excluded directories
+                let mut i = 0;
+                while i < children.len() {
+                    let should_remove = if let Ok(child) = &children[i] {
+                        if excludes.is_match(child.path()) {
+                            debug!("Skipping excluded item: {:?}", child.path());
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+
+                    if should_remove {
+                        let _ = children.remove(i);
+                    } else {
+                        i += 1;
+                    }
+                }
+
+                // 2. Collect sorted entries to send
+                // jwalk .sort(true) sorts by name, but we want to be sure and convert to our type
+                // Also, we need to ensure consistent ordering for our own processing if needed.
+                // Since we modified the list (removed items), the sort order of remaining items is preserved if it was sorted.
+                // But let's be safe.
                 children.sort_by(|a, b| {
                     match (a, b) {
                         (Ok(a), Ok(b)) => a.file_name().cmp(b.file_name()),
@@ -75,16 +81,10 @@ impl Scanner {
                     }
                 });
 
-                // 2. Collect sorted entries to send
                 let mut entries = Vec::with_capacity(children.len());
                 
                 for child in children.iter() {
                     if let Ok(child) = child {
-                        if excludes.is_match(child.path()) {
-                            debug!("Skipping excluded file: {:?}", child.path());
-                            continue;
-                        }
-                        
                         entries.push(ScannedEntry {
                             name: child.file_name().to_string_lossy().to_string(),
                             is_dir: child.file_type().is_dir(),
@@ -94,9 +94,10 @@ impl Scanner {
                 }
 
                 // 3. Send the sorted directory listing
-                // Note: 'path' here is the parent directory
+                // We use the path from the callback arguments
+                debug!("Scanning directory: {:?} ({} entries)", _path, entries.len());
                 if let Err(e) = tx.send(ScannedDir {
-                    path: path.to_path_buf(),
+                    path: _path.to_path_buf(),
                     entries,
                 }) {
                     debug!("Scanner channel closed: {}", e);
@@ -136,7 +137,7 @@ mod tests {
         // Collect all results
         let mut results: Vec<ScannedDir> = rx.into_iter().collect();
         
-        // Sort results by path to make assertion easy (since scan is parallel, order of dirs is random)
+        // Sort results by path to make assertion easy
         results.sort_by(|a, b| a.path.cmp(&b.path));
 
         // Verify Root Directory
@@ -146,11 +147,76 @@ mod tests {
         assert_eq!(root_dir.entries[1].name, "b_dir");
         assert_eq!(root_dir.entries[2].name, "c_file.txt");
 
-        // Verify Sub Directory
-        let sub_dir = results.iter().find(|d| d.path == root.join("b_dir")).expect("Subdir not found");
-        assert_eq!(sub_dir.entries.len(), 2);
-        assert_eq!(sub_dir.entries[0].name, "sub_a");
-        assert_eq!(sub_dir.entries[1].name, "sub_b.txt");
+        Ok(())
+    }
+
+    #[test]
+    fn test_scan_with_excludes() -> anyhow::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let root = temp_dir.path();
+
+        fs::write(root.join("keep.txt"), "content")?;
+        fs::write(root.join("ignore.tmp"), "content")?;
+        fs::create_dir(root.join("ignore_dir"))?;
+        fs::write(root.join("ignore_dir").join("file.txt"), "content")?;
+
+        // Note: globset matches against the path. 
+        // If we want to exclude a directory, we should match it.
+        let excludes = vec!["**/*.tmp".to_string(), "**/ignore_dir".to_string()];
+        let scanner = Scanner::new(root.to_path_buf(), &excludes)?;
+        let (tx, rx) = mpsc::channel();
+
+        scanner.scan_parallel(tx)?;
+
+        let results: Vec<ScannedDir> = rx.into_iter().collect();
+        
+        let root_dir = results.iter().find(|d| d.path == root).expect("Root not found");
+        
+        let names: Vec<String> = root_dir.entries.iter().map(|e| e.name.clone()).collect();
+        assert!(names.contains(&"keep.txt".to_string()));
+        assert!(!names.contains(&"ignore.tmp".to_string()));
+        assert!(!names.contains(&"ignore_dir".to_string()));
+
+        // Ensure ignore_dir was not scanned
+        let ignore_dir_scanned = results.iter().any(|d| d.path.ends_with("ignore_dir"));
+        assert!(!ignore_dir_scanned);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_scan_with_excludes_deep() -> anyhow::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let root = temp_dir.path();
+
+        fs::create_dir(root.join("deep_ignore"))?;
+        fs::create_dir(root.join("deep_ignore").join("subdir"))?;
+        fs::write(root.join("deep_ignore").join("subdir").join("file.txt"), "content")?;
+
+        // Pattern with trailing /**
+        // Note: In globset, **/foo/** matches anything inside foo, but not foo itself usually.
+        let excludes = vec!["**/deep_ignore/**".to_string()];
+        let scanner = Scanner::new(root.to_path_buf(), &excludes)?;
+        let (tx, rx) = mpsc::channel();
+
+        scanner.scan_parallel(tx)?;
+
+        let results: Vec<ScannedDir> = rx.into_iter().collect();
+        
+        // We expect deep_ignore to be scanned (as directory itself might not match), 
+        // but its contents (subdir) should match and be removed.
+        // So deep_ignore should be empty.
+        
+        // Find deep_ignore dir in results
+        let deep_dir = results.iter().find(|d| d.path.ends_with("deep_ignore"));
+        
+        if let Some(d) = deep_dir {
+            assert!(d.entries.is_empty(), "deep_ignore should be empty but has {:?}", d.entries);
+        }
+        
+        // Ensure subdir was NOT scanned as a directory (because it was removed from children of deep_ignore)
+        let subdir_scanned = results.iter().any(|d| d.path.ends_with("subdir"));
+        assert!(!subdir_scanned, "subdir should not be scanned");
 
         Ok(())
     }

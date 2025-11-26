@@ -98,7 +98,7 @@ try {
     $ErrorActionPreference = "Continue"
     
     # Capture stdout only (file count), let stderr go to console
-    $FileCount = & $AbsRumbaPath backup --config $AbsConfigFile --check 2>&1 | Where-Object { $_ -is [string] -and $_ -match '^\d+$' }
+    $FileCount = & $AbsRumbaPath backup --config $AbsConfigFile --check
     
     # Restore error preference
     $ErrorActionPreference = $prevErrorActionPreference

@@ -56,25 +56,28 @@ cargo run --bin rumba -- encode-password "your_password"
 Copy the `base64:xxx` output to the `password` field in config.
 
 ### 3. Run Backup
+Rumba uses a two-stage backup process for maximum efficiency:
 
-#### Method 1: Direct tar output
+#### Step 1: Check & Plan (Required)
+Scans the source directory, computes hashes (in parallel), updates the database, and identifies new/modified files.
 
 ```bash
-cargo run --bin rumba -- backup --config config.toml --output backup.tar
+# This will scan files and output the number of files needing backup
+rumba backup --config config.toml --check
 ```
 
-#### Method 2: Streaming to tape (recommended)
+#### Step 2: Execute Backup
+Reads the backup plan from the database and streams the data to tape. This step is instant (no re-scanning).
 
 ```powershell
-# Simple usage - all parameters from config file
+# Streaming to tape via rustltfs
 .\scripts\backup-streaming.ps1 -ConfigFile config.toml
 ```
 
-This will:
-- Stream tar data directly from Rumba to rustltfs (zero temp files)
-- Write to tape device specified in config
-- Backup database metadata
-- Generate logs
+Or manually:
+```bash
+rumba backup --config config.toml --output - | rustltfs write ...
+```
 
 ### 4. Inspect Database
 
@@ -115,27 +118,65 @@ Rumba borrows from Git's internal mechanisms, designed for massive file backups:
 
 ```mermaid
 graph TD
-    Source[SMB Share] -->|Parallel scan| Scanner(Scanner)
-    Scanner -->|Sorted directory stream| Pipeline{Pipeline}
-    
-    subgraph Pipeline Process
-        Pipeline -->|Bottom-up tree build| TreeBuilder[Merkle Tree Builder]
-        TreeBuilder -->|1. Check mtime/size| IndexCheck{Index Check}
-        IndexCheck -->|Unchanged| Skip[Skip]
+    subgraph Phase 1: Check & Plan
+        Source[SMB Share] -->|Parallel scan| Scanner(Scanner)
+        Scanner -->|Sorted directory stream| Pipeline{Pipeline}
+        Pipeline -->|1. Check mtime/size| IndexCheck{Index Check}
         IndexCheck -->|Changed| Hasher[Compute BLAKE3]
         Hasher -->|2. Check content hash| DedupCheck{Dedup Check}
-        DedupCheck -->|Hash exists| UpdateIdx[Update Index Only]
-        DedupCheck -->|New hash| NewFile[Add to Backup Plan]
+        DedupCheck -->|New hash| MarkDB[Mark 'needs_backup' in DB]
+        IndexCheck -->|Unchanged| Skip[Skip]
+    end
+
+    subgraph Phase 2: Execute Backup
+        DB[(Redb Metadata DB)] -->|Query 'needs_backup'| BackupExec[Backup Executor]
+        BackupExec -->|Stream content| TapeWriter(Tape Writer)
+        TapeWriter -->|Stream tar| Output[Output: rustltfs / tar]
+        TapeWriter -.->|Clear 'needs_backup'| DB
     end
     
-    NewFile --> BackupPlan[Generate Backup Plan]
-    BackupPlan --> TapeWriter(Tape Writer)
-    TapeWriter -->|Stream tar| Output[Output: rustltfs / tar]
-    TapeWriter -.->|3. Transaction commit| DB[(Redb Metadata DB)]
-    
-    DB <--> IndexCheck
-    DB <--> DedupCheck
+    MarkDB --> DB
 ```
+
+## Common Commands Reference
+
+Assuming `rumba.exe` and `db-inspect.exe` are in your PATH:
+
+### Rumba
+- **Check/Scan (Plan)**: 
+  ```bash
+  rumba backup --check
+  ```
+- **Backup to Tape (Stream)**: 
+  ```powershell
+  rumba backup --output - | rustltfs write --tape \\.\TAPE0 ...
+  ```
+- **Backup to File**: 
+  ```bash
+  rumba backup --output backup.tar
+  ```
+- **Encode Password**: 
+  ```bash
+  rumba encode-password "mypassword"
+  ```
+
+### DB Inspect
+- **Show Database Stats**: 
+  ```bash
+  db-inspect stats
+  ```
+- **List All Indexed Files**: 
+  ```bash
+  db-inspect list-index
+  ```
+- **Show Specific File Info**: 
+  ```bash
+  db-inspect show-index "\\server\share\file.txt"
+  ```
+- **List Deduplicated Blobs**: 
+  ```bash
+  db-inspect list-blobs
+  ```
 
 ## Streaming Backup
 

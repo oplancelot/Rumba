@@ -51,6 +51,7 @@ pub struct IndexEntry {
     pub mtime: i64,
     pub size: u64,
     pub hash: Hash,
+    pub needs_backup: bool,
 }
 
 

@@ -8,6 +8,7 @@ use crate::models::{Hash, FileMetadata, TreeEntry};
 use crate::diff::DiffEngine;
 use std::sync::mpsc;
 use std::io::Read;
+use rayon::prelude::*;
 
 pub struct BackupPlan {
     pub new_files: Vec<(PathBuf, Hash)>,
@@ -49,9 +50,14 @@ impl Pipeline {
 
         // 2. Ingest & Build Tree (Bottom-Up Strategy)
         let mut dir_map: HashMap<PathBuf, ScannedDir> = HashMap::new();
+        let mut scanned_count = 0;
         
         for scanned_dir in rx {
             dir_map.insert(scanned_dir.path.clone(), scanned_dir);
+            scanned_count += 1;
+            if scanned_count % 100 == 0 {
+                info!("Received scan results for {} directories...", scanned_count);
+            }
         }
 
         // Sort paths by length descending (leaves first)
@@ -66,27 +72,18 @@ impl Pipeline {
         let mut tree_hashes: HashMap<PathBuf, Hash> = HashMap::new();
 
         let diff_engine = DiffEngine::new(&self.db);
+        
+        let total_dirs = paths.len();
+        info!("Processing {} directories...", total_dirs);
+        let mut processed = 0;
 
         for path in paths {
             if let Some(dir_info) = dir_map.get(&path) {
-                let mut tree_entries = Vec::new();
-
-                for entry in &dir_info.entries {
-                    let entry_path = entry.path.clone();
-                    
-                    if entry.is_dir {
-                        // It's a directory, look up its computed hash
-                        if let Some(hash) = tree_hashes.get(&entry_path) {
-                            tree_entries.push(TreeEntry {
-                                name: entry.name.clone(),
-                                mode: 0o040755, // Directory mode
-                                hash: *hash,
-                            });
-                        } else {
-                            debug!("Subdirectory hash not found for {:?}, assuming empty or error", entry_path);
-                        }
-                    } else {
-                        // It's a file
+                // 1. Parallel process files
+                let file_results: Vec<Result<Option<(TreeEntry, Option<(PathBuf, Hash, u64)>)>>> = dir_info.entries.par_iter()
+                    .filter(|e| !e.is_dir)
+                    .map(|entry| {
+                        let entry_path = entry.path.clone();
                         match std::fs::metadata(&entry_path) {
                             Ok(fs_metadata) => {
                                 let mtime = fs_metadata.modified()
@@ -94,25 +91,12 @@ impl Pipeline {
                                     .unwrap_or(0);
                                 let size = fs_metadata.len();
                                 
-                                // 1. Check Index (Fast Path)
+                                // Check Index (Fast Path)
                                 let content_hash = match diff_engine.check_index(&entry_path, mtime, size)? {
-                                    Some(hash) => hash, // Clean
-                                    None => {
-                                        // Dirty: Compute Hash
-                                        compute_file_hash(&entry_path)?
-                                    }
+                                    Some(hash) => hash,
+                                    None => compute_file_hash(&entry_path)?
                                 };
 
-                                // 2. Check Deduplication
-                                // If we computed a new hash (or even if we got it from index, though less likely to be missing from blobs if in index),
-                                // we should check if we need to back it up.
-                                // Optimization: If check_index returned Some, we assume blob exists? 
-                                // Safety: Always check blob existence if we want to be sure, or trust index implies blob existence.
-                                // For robustness, let's check blob existence if it was dirty. 
-                                // If it was clean, we trust the blob is there (unless GC happened, which is out of scope).
-                                
-                                // Actually, let's just check `should_backup_blob` if we computed the hash.
-                                // If we got it from index, we assume it's already backed up.
                                 let mut needs_backup = false;
                                 if diff_engine.should_backup_blob(&content_hash)? {
                                     needs_backup = true;
@@ -121,26 +105,63 @@ impl Pipeline {
                                 let metadata = FileMetadata {
                                     size,
                                     mtime,
-                                    mode: 0o100644, // TODO: Real mode
+                                    mode: 0o100644,
                                     uid: 0,
                                     gid: 0,
                                     content_hash,
                                 };
 
-                                if needs_backup {
-                                    new_files.push((entry_path.clone(), content_hash));
-                                    total_size += metadata.size;
-                                }
+                                let new_file = if needs_backup {
+                                    Some((entry_path.clone(), content_hash, size))
+                                } else {
+                                    None
+                                };
 
-                                tree_entries.push(TreeEntry {
+                                let tree_entry = TreeEntry {
                                     name: entry.name.clone(),
                                     mode: metadata.mode,
                                     hash: content_hash,
-                                });
+                                };
+                                
+                                Ok(Some((tree_entry, new_file)))
                             },
                             Err(e) => {
                                 tracing::warn!("Failed to get metadata for {:?}: {}", entry_path, e);
+                                Ok(None)
                             }
+                        }
+                    })
+                    .collect();
+
+                let mut tree_entries = Vec::new();
+
+                // Collect file results
+                for res in file_results {
+                    match res {
+                        Ok(Some((entry, new_file))) => {
+                            tree_entries.push(entry);
+                            if let Some((p, h, s)) = new_file {
+                                new_files.push((p, h));
+                                total_size += s;
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => tracing::error!("Error processing file: {}", e),
+                    }
+                }
+
+                // 2. Process subdirectories (Serial, needs tree_hashes)
+                for entry in &dir_info.entries {
+                    if entry.is_dir {
+                        let entry_path = entry.path.clone();
+                        if let Some(hash) = tree_hashes.get(&entry_path) {
+                            tree_entries.push(TreeEntry {
+                                name: entry.name.clone(),
+                                mode: 0o040755,
+                                hash: *hash,
+                            });
+                        } else {
+                            debug!("Subdirectory hash not found for {:?}, assuming empty or error", entry_path);
                         }
                     }
                 }
@@ -155,6 +176,11 @@ impl Pipeline {
                 let tree_hash = *hasher.finalize().as_bytes();
                 
                 tree_hashes.insert(path.clone(), tree_hash);
+                
+                processed += 1;
+                if processed % 50 == 0 || processed == total_dirs {
+                    info!("Processed {}/{} directories. Current: {:?}", processed, total_dirs, path);
+                }
             }
         }
 

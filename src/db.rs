@@ -1,4 +1,5 @@
 use redb::{Database, TableDefinition, WriteTransaction};
+use redb::ReadableTable;
 use std::path::Path;
 use anyhow::Result;
 use crate::models::{Hash, BlobLocation};
@@ -121,6 +122,26 @@ impl BackupDb {
         let mut table = txn.open_table(INDEX_TABLE)?;
         table.insert(path, bytes.as_slice())?;
         Ok(())
+    }
+
+    pub fn get_files_needing_backup(&self) -> Result<Vec<(String, crate::models::IndexEntry)>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(INDEX_TABLE)?;
+        let mut result = Vec::new();
+
+        for item in table.iter()? {
+            let (path_val, entry_val) = item?;
+            let path = path_val.value().to_string();
+            
+            let bytes = entry_val.value().to_vec();
+            let archived = unsafe { rkyv::archived_root::<crate::models::IndexEntry>(&bytes) };
+            let entry: crate::models::IndexEntry = archived.deserialize(&mut rkyv::de::deserializers::SharedDeserializeMap::new()).unwrap();
+            
+            if entry.needs_backup {
+                result.push((path, entry));
+            }
+        }
+        Ok(result)
     }
 }
 

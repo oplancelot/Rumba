@@ -36,29 +36,65 @@ Rumba 借鉴了 Git 的内部机制，专为海量文件备份设计：
 
 ```mermaid
 graph TD
-    Source[SMB 共享源] -->|并行扫描 jwalk| Scanner(扫描器)
-    Scanner -->|排序后的目录流| Pipeline{Pipeline 流水线}
-    
-    subgraph Pipeline Process [Pipeline 处理流程]
-        Pipeline -->|自底向上构建树| TreeBuilder[Merkle Tree 构建]
-        TreeBuilder -->|1. 检查 mtime/size| IndexCheck{索引检查}
-        IndexCheck -->|未修改| Skip[跳过]
+    subgraph Phase 1: 检查与计划 (Check & Plan)
+        Source[SMB 共享源] -->|并行扫描| Scanner(扫描器)
+        Scanner -->|排序后的目录流| Pipeline{Pipeline}
+        Pipeline -->|1. 检查 mtime/size| IndexCheck{索引检查}
         IndexCheck -->|已修改| Hasher[计算 BLAKE3]
         Hasher -->|2. 检查内容哈希| DedupCheck{去重检查}
-        DedupCheck -->|Hash 已存在| UpdateIdx[仅更新索引]
-        DedupCheck -->|新 Hash| NewFile[加入备份计划]
+        DedupCheck -->|新 Hash| MarkDB[在 DB 中标记 'needs_backup']
+        IndexCheck -->|未修改| Skip[跳过]
+    end
+
+    subgraph Phase 2: 执行备份 (Execute Backup)
+        DB[(Redb 元数据库)] -->|查询 'needs_backup'| BackupExec[备份执行器]
+        BackupExec -->|读取内容| TapeWriter(磁带写入器)
+        TapeWriter -->|流式打包| Output[Output: rustltfs / tar]
+        TapeWriter -.->|清除 'needs_backup'| DB
     end
     
-    NewFile --> BackupPlan[生成备份计划]
-    
-    BackupPlan --> TapeWriter(磁带写入器)
-    TapeWriter --> 流式打包
-    TapeWriter -->  Output[Output: rustltfs / tar]
-    TapeWriter -.->|3. 事务提交| DB[(Redb 元数据库)]
-    
-    DB <--> IndexCheck
-    DB <--> DedupCheck
+    MarkDB --> DB
 ```
+
+## 常用命令速查
+
+假设 `rumba.exe` 和 `db-inspect.exe` 已在您的 PATH 中：
+
+### Rumba
+- **检查/扫描 (Plan)**: 
+  ```bash
+  rumba backup --check
+  ```
+- **备份到磁带 (流式)**: 
+  ```powershell
+  rumba backup --output - | rustltfs write --tape \\.\TAPE0 ...
+  ```
+- **备份到文件**: 
+  ```bash
+  rumba backup --output backup.tar
+  ```
+- **编码密码**: 
+  ```bash
+  rumba encode-password "mypassword"
+  ```
+
+### DB Inspect (数据库检查)
+- **显示数据库统计**: 
+  ```bash
+  db-inspect stats
+  ```
+- **列出所有索引文件**: 
+  ```bash
+  db-inspect list-index
+  ```
+- **查看特定文件信息**: 
+  ```bash
+  db-inspect show-index "\\server\share\file.txt"
+  ```
+- **列出去重 Blobs**: 
+  ```bash
+  db-inspect list-blobs
+  ```
 
 ### 核心模块与函数调用说明
 
@@ -228,13 +264,27 @@ cargo run --bin rumba -- encode-password "your_password"
 将输出的 `base64:xxx` 粘贴到配置文件的 `password` 字段。
 
 ### 3. 运行备份
+Rumba 采用两阶段备份流程以实现最高效率：
+
+#### 步骤 1: 检查与计划 (Check & Plan)
+扫描源目录，并行计算哈希，更新数据库，并识别新增/修改的文件。
 
 ```bash
-# 使用默认配置文件 config.toml
-cargo run --bin rumba
+# 此命令将扫描文件并输出需要备份的文件数量
+rumba backup --config config.toml --check
+```
 
-# 或指定配置文件路径
-cargo run --bin rumba -- --config /path/to/config.toml
+#### 步骤 2: 执行备份 (Execute Backup)
+从数据库读取备份计划并将数据流式传输到磁带。此步骤是即时的（无需重新扫描）。
+
+```powershell
+# 通过 rustltfs 流式传输到磁带
+.\scripts\backup-streaming.ps1 -ConfigFile config.toml
+```
+
+或者手动执行：
+```bash
+rumba backup --config config.toml --output - | rustltfs write ...
 ```
 
 ### 4. 检查数据库内容

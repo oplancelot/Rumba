@@ -185,6 +185,7 @@ fn main() -> Result<()> {
                 mtime,
                 size,
                 hash: *hash,
+                needs_backup: false,
             };
             db.insert_index(&write_txn, &path_str, &entry)?;
         }
@@ -247,12 +248,40 @@ fn run_backup_command(config_path: &str, output: &Option<String>, format: &str, 
     let db = db::BackupDb::new(&db_path)?;
     eprintln!("Rumba: Database initialized");
     
-    // Run pipeline
-    let root_path = config.get_backup_root()?;
-    eprintln!("Rumba: Scanning files from: {:?}", root_path);
-    
-    let pipeline = pipeline::Pipeline::new(db.clone(), root_path.clone(), config.source.excludes.clone());
-    let plan = pipeline.run()?;
+    // Check for pending backups in DB
+    let pending_files = if !check {
+        db.get_files_needing_backup()?
+    } else {
+        Vec::new()
+    };
+
+    let plan = if !pending_files.is_empty() {
+        eprintln!("Rumba: Found {} pending files in database.", pending_files.len());
+        let mut new_files = Vec::new();
+        let mut total_size = 0;
+        
+        for (path_str, entry) in pending_files {
+            new_files.push((std::path::PathBuf::from(path_str), entry.hash));
+            total_size += entry.size;
+        }
+        
+        pipeline::BackupPlan {
+            new_files,
+            total_size,
+        }
+    } else if check {
+        // Run pipeline (Scan) only in check mode
+        let root_path = config.get_backup_root()?;
+        eprintln!("Rumba: Scanning files from: {:?}", root_path);
+        
+        let pipeline = pipeline::Pipeline::new(db.clone(), root_path.clone(), config.source.excludes.clone());
+        pipeline.run()?
+    } else {
+        // Backup mode but no pending files
+        eprintln!("Rumba: No pending files found in database.");
+        eprintln!("Rumba: Please run 'rumba backup --check' first to scan for changes.");
+        return Ok(());
+    };
     
     eprintln!("Rumba: Backup plan generated");
     eprintln!("Rumba:   New files: {}", plan.new_files.len());
@@ -262,6 +291,31 @@ fn run_backup_command(config_path: &str, output: &Option<String>, format: &str, 
     );
     
     if check {
+        // In check mode, update the database index to mark files as needing backup
+        eprintln!("Rumba: Updating database index (marking for backup)...");
+        let write_txn = db.begin_write()?;
+        
+        for (path, hash) in &plan.new_files {
+            if let Ok(metadata) = std::fs::metadata(path) {
+                let mtime = metadata.modified()
+                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64)
+                    .unwrap_or(0);
+                let size = metadata.len();
+                
+                let path_str = path.to_string_lossy();
+                let entry = models::IndexEntry {
+                    mtime,
+                    size,
+                    hash: *hash,
+                    needs_backup: true, // Mark as needing backup
+                };
+                db.insert_index(&write_txn, &path_str, &entry)?;
+            }
+        }
+        
+        write_txn.commit()?;
+        eprintln!("Rumba: Database index updated");
+        
         // Output just the number of files to stdout
         println!("{}", plan.new_files.len());
         return Ok(());
@@ -299,14 +353,14 @@ fn run_backup_command(config_path: &str, output: &Option<String>, format: &str, 
         eprintln!("Rumba: Tar file written successfully: {}", output);
     }
     
-    // Update database with blob locations
+    // Update database with blob locations and clear needs_backup flag
     let write_txn = db.begin_write()?;
     
     for (hash, location) in blob_locations {
         db.insert_blob(&write_txn, &hash, &location)?;
     }
     
-    // Update index
+    // Update index (clear needs_backup)
     for (path, hash) in &plan.new_files {
         if let Ok(metadata) = std::fs::metadata(path) {
             let mtime = metadata.modified()
@@ -319,6 +373,7 @@ fn run_backup_command(config_path: &str, output: &Option<String>, format: &str, 
                 mtime,
                 size,
                 hash: *hash,
+                needs_backup: false, // Clear flag
             };
             db.insert_index(&write_txn, &path_str, &entry)?;
         }

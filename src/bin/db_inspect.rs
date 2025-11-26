@@ -128,11 +128,12 @@ fn list_index(db: &db::BackupDb, filter: Option<&str>) -> Result<()> {
         let entry: models::IndexEntry = archived.deserialize(&mut rkyv::de::deserializers::SharedDeserializeMap::new())
             .map_err(|e| anyhow::anyhow!("Failed to deserialize index entry: {}", e))?;
         
-        println!("{:<50} {:>12} {:>15} {}", 
-            if path.len() > 50 { path[..47].to_string() + "..." } else { path.to_string() },
+        println!("{:<50} {:>12} {:>15} {} [{}]", 
+            path,
             entry.size,
             entry.mtime,
-            hex::encode(&entry.hash[..16])
+            hex::encode(&entry.hash[..16]),
+            if entry.needs_backup { "PENDING" } else { "OK" }
         );
     }
     
@@ -149,6 +150,7 @@ fn show_index(db: &db::BackupDb, path: &str) -> Result<()> {
             println!("Size:  {} bytes", e.size);
             println!("Mtime: {} (timestamp)", e.mtime);
             println!("Hash:  {}", hex::encode(e.hash));
+            println!("Status: {}", if e.needs_backup { "Needs Backup" } else { "Backed Up" });
         }
         None => {
             println!("No index entry found for: {}", path);

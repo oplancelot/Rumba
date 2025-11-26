@@ -2,8 +2,6 @@
 *.redb
 *.db
 *.tar
-config.toml
-config_test.toml
 
 /tests
 *.exe
@@ -11,3 +9,4 @@ config_test.toml
 .agent
 /examples
 *.txt
+config.toml

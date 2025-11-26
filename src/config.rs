@@ -248,15 +248,18 @@ mod tests {
                 url: "\\\\server\\share".to_string(),
                 username: "user".to_string(),
                 password: "pass".to_string(),
+                excludes: vec![],
             },
-            target: TargetConfig {
-                tape_path: "tape.tar".to_string(),
+            target: Some(TargetConfig {
+                output_mode: "tar".to_string(),
+                tar_path: "tape.tar".to_string(),
                 db_path: "db.redb".to_string(),
-            },
+            }),
             backup: BackupConfig {
                 parallel_threads: 4,
                 compression_level: 3,
             },
+            tape: TapeConfig::default(),
         };
         
         assert!(config.validate().is_ok());
@@ -269,12 +272,15 @@ mod tests {
                 url: "".to_string(),
                 username: "user".to_string(),
                 password: "pass".to_string(),
+                excludes: vec![],
             },
-            target: TargetConfig {
-                tape_path: "tape.tar".to_string(),
+            target: Some(TargetConfig {
+                output_mode: "tar".to_string(),
+                tar_path: "tape.tar".to_string(),
                 db_path: "db.redb".to_string(),
-            },
+            }),
             backup: BackupConfig::default(),
+            tape: TapeConfig::default(),
         };
         
         assert!(config.validate().is_err());
