@@ -71,7 +71,7 @@ Reads the backup plan from the database and streams the data to tape. This step 
 
 ```powershell
 # Streaming to tape via rustltfs
-.\scripts\backup-streaming.ps1 -ConfigFile config.toml
+.\scripts\backup-incremental.ps1 -ConfigFile config.toml
 ```
 
 Or manually:
@@ -213,7 +213,7 @@ Rumba/
 │   └── bin/
 │       └── db_inspect.rs # Database inspection tool
 ├── scripts/
-│   ├── backup-streaming.ps1  # Streaming backup script
+│   ├── backup-incremental.ps1  # Streaming incremental backup script
 │   └── restore-from-tape.ps1 # Restore script
 ├── config.example.toml   # Configuration example
 └── Cargo.toml

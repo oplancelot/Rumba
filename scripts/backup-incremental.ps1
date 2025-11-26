@@ -1,4 +1,4 @@
-# Rumba Streaming Tape Backup Script v3.0
+# Rumba Streaming Tape Backup Script v1.0
 # Reads all parameters from config file - simple usage
 
 param(

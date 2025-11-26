@@ -279,7 +279,7 @@ rumba backup --config config.toml --check
 
 ```powershell
 # 通过 rustltfs 流式传输到磁带
-.\scripts\backup-streaming.ps1 -ConfigFile config.toml
+.\scripts\backup-incremental.ps1 -ConfigFile config.toml
 ```
 
 或者手动执行：
