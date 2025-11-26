@@ -9,6 +9,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Ensure we are running from the project root (parent of scripts dir)
+Set-Location "$PSScriptRoot\.."
+
 # Generate timestamps
 $Date = Get-Date -Format "yyyyMMdd"
 $SessionId = Get-Date -Format "yyyyMMdd_HHmmss"
