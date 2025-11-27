@@ -113,9 +113,26 @@ impl TapeWriter {
             // Record the current offset before writing
             let offset = self.current_offset;
             
-            // Read the file content
-            let content = std::fs::read(path)?;
-            let size = content.len() as u64;
+            // 🛡️ Robust error handling: Skip files that fail to access
+            let metadata = match std::fs::metadata(path) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("WARNING: Skipping file (metadata error): {:?}", path);
+                    eprintln!("  Error: {}", e);
+                    continue; // Skip this file and continue with others
+                }
+            };
+            let size = metadata.len();
+            
+            // Open file for streaming
+            let mut file = match std::fs::File::open(path) {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("WARNING: Skipping file (cannot open): {:?}", path);
+                    eprintln!("  Error: {}", e);
+                    continue; // Skip this file and continue with others
+                }
+            };
             
             // Create a tar header
             let mut header = tar::Header::new_gnu();
@@ -130,7 +147,12 @@ impl TapeWriter {
             let hash_str = hex::encode(hash);
             let tar_entry_name = format!("{}_{}", filename, &hash_str[..16]); // Use first 16 chars of hash
             
-            tar_builder.append_data(&mut header, &tar_entry_name, content.as_slice())?;
+            // Stream file content directly to tar
+            if let Err(e) = tar_builder.append_data(&mut header, &tar_entry_name, &mut file) {
+                eprintln!("WARNING: Skipping file (tar append failed): {:?}", path);
+                eprintln!("  Error: {}", e);
+                continue; // Skip this file and continue with others
+            }
             
             // Calculate new offset (tar adds 512-byte headers and rounds to 512-byte blocks)
             let header_size = 512u64;
