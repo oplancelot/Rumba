@@ -82,7 +82,7 @@ try {
             $RumbaPath = "$ScriptRoot\..\rumba.exe"
         }
         else {
-            $RumbaPath = "rumba.exe" 
+            $RumbaPath = ".\rumba.exe" 
         }
     }
     
@@ -91,7 +91,7 @@ try {
             $RustLtfsPath = "$ScriptRoot\..\rustltfs.exe"
         }
         else {
-            $RustLtfsPath = "rustltfs.exe" 
+            $RustLtfsPath = ".\rustltfs.exe" 
         }
     }
     
@@ -173,7 +173,7 @@ try {
         Write-Host "   Destination: $DbDest" -ForegroundColor White
         Write-Host ""
         
-        & $RustLtfsPath write --tape $TapeDevice --output $DbDest --verify --progress $DatabasePath
+        & $AbsRustLtfsPath write --tape $TapeDevice --output $DbDest --verify --progress $DatabasePath
         
         if ($LASTEXITCODE -eq 0) {
             Write-Host ""

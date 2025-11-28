@@ -11,3 +11,4 @@
 *.txt
 config.toml
 scripts/backup-full.ps1
+Rumba.code-workspace

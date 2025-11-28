@@ -13,6 +13,7 @@ use rayon::prelude::*;
 pub struct BackupPlan {
     pub new_files: Vec<(PathBuf, Hash)>,
     pub total_size: u64,
+    pub root: PathBuf,
 }
 
 pub struct Pipeline {
@@ -55,7 +56,7 @@ impl Pipeline {
         for scanned_dir in rx {
             dir_map.insert(scanned_dir.path.clone(), scanned_dir);
             scanned_count += 1;
-            if scanned_count % 100 == 0 {
+            if scanned_count % 1000 == 0 {
                 info!("Received scan results for {} directories...", scanned_count);
             }
         }
@@ -178,7 +179,7 @@ impl Pipeline {
                 tree_hashes.insert(path.clone(), tree_hash);
                 
                 processed += 1;
-                if processed % 50 == 0 || processed == total_dirs {
+                if processed % 1000 == 0 || processed == total_dirs {
                     info!("Processed {}/{} directories. Current: {:?}", processed, total_dirs, path);
                 }
             }
@@ -187,6 +188,7 @@ impl Pipeline {
         Ok(BackupPlan {
             new_files,
             total_size,
+            root: self.root.clone(),
         })
     }
 }

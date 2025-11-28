@@ -265,9 +265,11 @@ fn run_backup_command(config_path: &str, output: &Option<String>, format: &str, 
             total_size += entry.size;
         }
         
+        let root_path = config.get_backup_root()?;
         pipeline::BackupPlan {
             new_files,
             total_size,
+            root: root_path,
         }
     } else if check {
         // Run pipeline (Scan) only in check mode

@@ -140,12 +140,12 @@ impl TapeWriter {
             header.set_mode(0o644);
             header.set_cksum();
             
-            // Use "original_filename_hash" as tar entry name for content-addressable storage
-            let filename = path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unnamed");
-            let hash_str = hex::encode(hash);
-            let tar_entry_name = format!("{}_{}", filename, &hash_str[..16]); // Use first 16 chars of hash
+            // Use relative path for tar entry name to preserve directory structure
+            let relative_path = path.strip_prefix(&plan.root)
+                .unwrap_or(path);
+            
+            // Convert to string and ensure forward slashes for tar compatibility
+            let tar_entry_name = relative_path.to_string_lossy().replace('\\', "/");
             
             // Stream file content directly to tar
             if let Err(e) = tar_builder.append_data(&mut header, &tar_entry_name, &mut file) {
