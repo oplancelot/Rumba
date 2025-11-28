@@ -20,7 +20,7 @@ $SessionId = Get-Date -Format "yyyyMMdd_HHmmss"
 if (-not (Test-Path $LogDir)) {
     New-Item -ItemType Directory -Path $LogDir | Out-Null
 }
-$LogFile = Join-Path $LogDir "backup_$SessionId.log"
+$LogFile = Join-Path $LogDir "backup_incremental_$SessionId.log"
 Start-Transcript -Path $LogFile -Append
 
 Write-Host ""
