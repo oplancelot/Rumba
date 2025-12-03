@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use jwalk::WalkDir;
-use tracing::{debug, info, warn};
+use tracing::debug;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 
 #[derive(Debug)]
