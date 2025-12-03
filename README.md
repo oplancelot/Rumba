@@ -13,7 +13,7 @@ High-performance incremental backup tool for LTO tape using Git-inspired content
 - ✅ **redb Metadata Storage**: Embedded database for backup metadata
 - ✅ **Git-like Mechanism**: Content-Addressable Storage (CAS) + Merkle Tree
 - ✅ **Streaming Backup**: Zero-temp-file streaming to tape via PowerShell pipes
-- 🚧 **LTFS Integration**: Integration with rustltfs for real tape writing
+- ✅ **LTFS Integration**: Integration with [rustltfs](https://github.com/oplancelot/RustLTFS) for real tape writing
 
 ## Quick Start
 
@@ -32,17 +32,18 @@ Edit `config.toml` with your settings:
 url = "\\\\server\\share\\path"
 username = "your_username"
 password = "your_password"  # or use base64 encoding
+excludes = ["**/*.tmp", "**/*.cache"] # Glob patterns to exclude
 
 [target]
-output_mode = "tar"
-tape_path = "backup.tar"
-db_path = "backup_meta.redb"
+output_mode = "stream" # "stream" or "tar"
+tar_path = "backup_%Y%m%d.tar" # Only used if output_mode = "tar"
+db_path = "rumba.db"
 
 [tape]
 device = "\\\\.\\TAPE0"  # Windows: \\.\TAPE0, Linux: /dev/sg0
-rumba_path = "rumba"
-rustltfs_path = "rustltfs"
-database_path = "rumba.db"
+rumba_path = "rumba.exe"
+rustltfs_path = "rustltfs.exe"
+skip_database = false
 ```
 
 ### 2. Password Encoding (Optional)
@@ -214,7 +215,6 @@ Rumba/
 │       └── db_inspect.rs # Database inspection tool
 ├── scripts/
 │   ├── backup-incremental.ps1  # Streaming incremental backup script
-│   └── restore-from-tape.ps1 # Restore script
 ├── config.example.toml   # Configuration example
 └── Cargo.toml
 ```
@@ -226,29 +226,25 @@ Rumba/
 - `url`: SMB share path (Windows UNC format)
 - `username`: SMB username
 - `password`: SMB password (plain text or base64 encoded)
-- `excludes`: Glob patterns to exclude from backup
+- `excludes`: List of glob patterns to exclude from backup (e.g., `["**/*.tmp", "**/Thumbs.db"]`)
 
 ### [target] - Backup Target
 
-- `output_mode`: "rustltfs" or "tar"
-- `tape_path`: Tape device path or tar file path
-- `db_path`: Metadata database path
+- `output_mode`: Output mode, either `"stream"` (for piping to tape) or `"tar"` (for writing to file)
+- `tar_path`: Path to tar file (only used when `output_mode = "tar"`). Supports `strftime` formatting (e.g., `%Y%m%d_%H%M%S`)
+- `db_path`: Path to metadata database
 
 ### [backup] - Backup Behavior
 
 - `parallel_threads`: Number of parallel scanning threads (default: CPU cores)
 - `compression_level`: Zstd compression level 0-22 (default: 3)
 
-### [tape] - Tape Device Configuration
+### [tape] - Tape Device Configuration (for Scripts)
 
-- `device`: Tape device path (Windows: `\\\\.\\TAPE0`, Linux: `/dev/sg0`)
-- `rumba_path`: Path to rumba executable
-- `rustltfs_path`: Path to rustltfs executable
-- `database_path`: Database file path
-- `skip_database`: Skip database backup
-- `email_notification`: Enable email notifications
-- `email_to`: Email recipient
-- `smtp_server`: SMTP server address
+- `device`: Tape device path (Windows: `\\.\TAPE0`, Linux: `/dev/sg0`)
+- `rumba_path`: Path to rumba executable (default: `rumba.exe`)
+- `rustltfs_path`: Path to rustltfs executable (default: `rustltfs.exe`)
+- `skip_database`: Boolean to skip database backup in streaming mode
 
 ## Security Notes
 
@@ -273,4 +269,4 @@ Rumba/
 
 ## License
 
-[MIT](LICENSE)
+[Apache-2.0](./LICENSE.md)

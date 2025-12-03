@@ -10,7 +10,7 @@
 - ✅ **增量备份**: 基于文件内容 Hash 的去重和索引
 - ✅ **redb 元数据存储**: 使用嵌入式数据库存储备份元数据
 - ✅ **Git-like 机制**: 内容寻址存储 (CAS) + Merkle Tree
-- 🚧 **LTFS 集成**: 计划集成 rustltfs 进行真实磁带写入
+- ✅ **LTFS 集成**: 已集成 [rustltfs](https://github.com/oplancelot/RustLTFS) 进行真实磁带写入
 
 ## 架构与原理
 
@@ -243,14 +243,18 @@ copy config.example.toml config.toml
 url = "\\\\server\\share\\path"
 username = "your_username"
 password = "your_password"  # 或使用 base64 编码
+excludes = ["**/*.tmp", "**/*.cache"] # 排除文件的 Glob 模式列表
 
 [target]
-tape_path = "tape_drive.tar"
-db_path = "backup_meta.redb"
+output_mode = "stream" # "stream" (流式) 或 "tar" (文件)
+tar_path = "backup_%Y%m%d.tar" # 仅当 output_mode = "tar" 时使用
+db_path = "rumba.db"
 
-[backup]
-parallel_threads = 4
-compression_level = 3
+[tape]
+device = "\\\\.\\TAPE0"  # Windows: \\.\TAPE0, Linux: /dev/sg0
+rumba_path = "rumba.exe"
+rustltfs_path = "rustltfs.exe"
+skip_database = false
 ```
 
 ### 2. 密码编码（可选）
@@ -305,63 +309,6 @@ cargo run --bin db-inspect -- list-index
 cargo run --bin db-inspect -- show-index "\\\\server\\share\\file.txt"
 ```
 
-## 测试
-
-### 自动化测试
-
-运行提供的测试脚本：
-
-```bash
-.\test_config.bat
-```
-
-该脚本会：
-1. 清理旧的测试数据
-2. 测试密码编码
-3. 运行首次备份（所有文件应为新文件）
-4. 验证数据库和磁带文件已创建
-5. 运行第二次备份（应跳过所有未修改文件）
-6. 显示数据库统计信息
-
-### 手动测试
-
-测试三个核心功能（按照提供的测试计划）：
-
-#### 测试 1: SMB 文件差异识别
-
-```bash
-cargo run --bin rumba -- --config config_test.toml
-```
-
-验证点：
-- 程序成功连接到 SMB 共享
-- 扫描器遍历所有文件
-- 日志显示扫描的文件数量
-
-#### 测试 2: redb 数据库存储
-
-```bash
-# 首次备份
-cargo run --bin rumba -- --config config_test.toml
-
-# 第二次备份（应显示 "Nothing to backup"）
-cargo run --bin rumba -- --config config_test.toml
-
-# 检查数据库
-cargo run --bin db-inspect -- stats
-```
-
-#### 测试 3: 文件流输出（Mock rustltfs）
-
-```bash
-# 运行备份
-cargo run --bin rumba -- --config config_test.toml
-
-# 检查生成的 tar 文件
-tar -tvf tape_drive.tar
-```
-
-当前实现将文件流写入本地 `tape_drive.tar` 文件。未来可以通过管道传递给 `rustltfs` 进程。
 
 ## 项目结构
 
@@ -379,8 +326,9 @@ Rumba/
 │   ├── tape.rs          # 磁带写入器
 │   └── bin/
 │       └── db_inspect.rs # 数据库检查工具 ⭐ NEW
-├── config.example.toml   # 配置文件示例 ⭐ NEW
-├── config_test.toml      # 测试配置 ⭐ NEW
+├── scripts/
+│   └── backup-incremental.ps1  # 流式增量备份脚本
+├── config.example.toml   # 配置文件示例
 └── Cargo.toml
 ```
 
@@ -391,16 +339,25 @@ Rumba/
 - `url`: SMB 共享路径（Windows UNC 格式）
 - `username`: SMB 用户名
 - `password`: SMB 密码（支持明文或 base64 编码）
+- `excludes`: 要排除的文件 Glob 模式列表 (例如 `["**/*.tmp", "**/Thumbs.db"]`)
 
 ### [target] - 备份目标配置
 
-- `tape_path`: 磁带设备路径或模拟文件路径
+- `output_mode`: 输出模式，`"stream"` (用于管道传输到磁带) 或 `"tar"` (直接写入文件)
+- `tar_path`: Tar 文件路径 (仅当 `output_mode = "tar"` 时使用)。支持 `strftime` 格式化 (例如 `%Y%m%d_%H%M%S`)
 - `db_path`: 元数据数据库路径
 
 ### [backup] - 备份行为配置
 
 - `parallel_threads`: 并行扫描线程数（默认：CPU 核心数）
 - `compression_level`: Zstd 压缩级别 0-22（默认：3）
+
+### [tape] - 磁带设备配置 (用于脚本)
+
+- `device`: 磁带设备路径 (Windows: `\\.\TAPE0`, Linux: `/dev/sg0`)
+- `rumba_path`: rumba 可执行文件路径 (默认: `rumba.exe`)
+- `rustltfs_path`: rustltfs 可执行文件路径 (默认: `rustltfs.exe`)
+- `skip_database`: 是否在流式模式下跳过数据库备份
 
 ## 安全注意事项
 
@@ -423,6 +380,6 @@ Rumba/
 - **配置**: TOML + serde
 - **CLI**: clap
 
-## 许可证
+## License
 
-[MIT](LICENSE)
+[Apache-2.0](./LICENSE.md)
