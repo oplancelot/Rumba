@@ -17,6 +17,7 @@ use std::path::PathBuf;
 #[derive(Clone)]
 pub struct BackupDb {
     db: Arc<Database>,
+    #[allow(dead_code)]
     path: PathBuf,
 }
 
@@ -37,6 +38,7 @@ impl BackupDb {
         Ok(Self { db: Arc::new(db), path: path_buf })
     }
     
+    #[allow(dead_code)]
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -45,6 +47,7 @@ impl BackupDb {
         Ok(self.db.begin_write()?)
     }
     
+    #[allow(dead_code)]
     pub fn begin_read(&self) -> Result<redb::ReadTransaction> {
         Ok(self.db.begin_read()?)
     }
@@ -91,6 +94,7 @@ impl BackupDb {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn insert_tree(&self, txn: &WriteTransaction, hash: &Hash, entries: &Vec<crate::models::TreeEntry>) -> Result<()> {
         use rkyv::ser::Serializer;
         let mut serializer = rkyv::ser::serializers::AllocSerializer::<4096>::default();
@@ -102,6 +106,7 @@ impl BackupDb {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn insert_commit(&self, txn: &WriteTransaction, timestamp: u64, commit: &crate::models::Commit) -> Result<()> {
         use rkyv::ser::Serializer;
         let mut serializer = rkyv::ser::serializers::AllocSerializer::<1024>::default();
